@@ -1,0 +1,92 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>University AI Assistant</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+    <div class="chat-container">
+        <header class="chat-header">
+            <div class="header-left">
+                <div class="logo-wrap">
+                    <img class="logo" src="logo.png" alt="K.R. Mangalam University logo">
+                </div>
+                <div class="bot-info">
+                    <h2>Campus Guide</h2>
+                    <div class="status-line">
+                        <span class="status-dot"></span>
+                        <span class="status-text">Online</span>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <main class="chat-window" id="chatWindow">
+            <div class="suggestion-row">
+                <button class="chip">Admissions Deadlines</button>
+                <button class="chip">Scholarships</button>
+                <button class="chip">Course Catalog</button>
+                <button class="chip">Campus Map</button>
+                <button class="chip">Housing</button>
+            </div>
+
+            <div class="message-group bot">
+                <div class="bubble">
+                    Welcome to the University AI Assistant. I can help with admissions, courses,
+                    financial aid, housing, and campus services. What do you need today?
+                </div>
+
+                <div class="action-list">
+                    <div class="list-item">
+                        <span>Apply and admissions checklist</span>
+                        <i data-lucide="chevron-right"></i>
+                    </div>
+                    <div class="list-item">
+                        <span>Registrar and transcripts</span>
+                        <i data-lucide="chevron-right"></i>
+                    </div>
+                    <div class="list-item">
+                        <span>Financial aid and tuition</span>
+                        <i data-lucide="chevron-right"></i>
+                    </div>
+                </div>
+            </div>
+
+            <div class="message-group user">
+                <div class="bubble gradient-bubble">Scholarships</div>
+            </div>
+
+            <div class="message-group bot">
+                <div class="bubble">
+                    Scholarship options depend on your program and academic record. I can show
+                    merit-based awards, need-based aid, and department scholarships. What is your
+                    program and start term?
+                </div>
+            </div>
+        </main>
+
+        <footer class="chat-footer">
+            <div class="input-wrapper">
+                <input type="text" id="userInput" placeholder="Ask about admissions, courses, or services">
+                <div class="input-actions">
+                    <button class="icon-btn" aria-label="Add emoji">
+                        <i data-lucide="smile"></i>
+                    </button>
+                    <button class="icon-btn" aria-label="Upload file">
+                        <i data-lucide="upload"></i>
+                    </button>
+                    <button class="send-btn" id="sendBtn" aria-label="Send message">
+                        <i data-lucide="send"></i>
+                    </button>
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
