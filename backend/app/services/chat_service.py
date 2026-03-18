@@ -18,10 +18,12 @@ class ChatService:
     async def get_chat_response(self, req: ChatRequest) -> ChatResponse:
         start = time.perf_counter()
         sources = self.retrieval.find_sources(req.message)
+        persona = (req.role or "student").strip().lower()
 
         context = "\n".join([f"- {item.snippet}" for item in sources])
         prompt = (
-            "Answer the student question using available university context when relevant.\n"
+            f"You are assisting a {persona} in a university portal chatbot.\n"
+            "Answer using available university context when relevant, and adapt the explanation to that persona.\n"
             f"Question: {req.message}\n"
             f"Context:\n{context if context else 'No matching local context found.'}"
         )

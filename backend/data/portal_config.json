@@ -1,0 +1,254 @@
+{
+  "student_email_map": {
+    "rahul@krmangalam.edu.in": "AI23001",
+    "aditi.singh@krmangalam.edu.in": "AI23002"
+  },
+  "faculty_email_map": {
+    "dr.sharmaji@krmangalam.edu.in": "FAC1001"
+  },
+  "metadata": {
+    "system": "College Portal Chatbot",
+    "version": "3.0",
+    "timezone": "Asia/Kolkata",
+    "portal_base_url": "https://portal.college.edu",
+    "scalability": "Supports 1000+ students",
+    "last_updated_at": "2026-03-08T10:00:00+05:30"
+  },
+  "personas": {
+    "student": {
+      "label": "Student",
+      "description": "Check attendance, assignments, fees, syllabus, and results.",
+      "quick_actions": [
+        { "intent": "attendance", "label": "Attendance Summary", "query": "attendance of all subjects", "tone": "Academic", "priority": 10 },
+        { "intent": "assignments", "label": "Due Assignments", "query": "due assignment of all subjects", "tone": "Deadline", "priority": 9 },
+        { "intent": "syllabus", "label": "Syllabus Overview", "query": "syllabus of all subjects", "tone": "Course", "priority": 8 },
+        { "intent": "fees", "label": "Fee Status", "query": "pending fees", "tone": "Finance", "priority": 7 }
+      ]
+    },
+    "faculty": {
+      "label": "Faculty",
+      "description": "Track classes, student progress, submissions, and leave workflow.",
+      "quick_actions": [
+        { "intent": "class_schedule", "label": "Today's Classes", "query": "show my classes for today", "tone": "Teaching", "priority": 10 },
+        { "intent": "assignments_review", "label": "Pending Reviews", "query": "show pending assignment reviews", "tone": "Evaluation", "priority": 9 },
+        { "intent": "attendance_review", "label": "Low Attendance Alerts", "query": "show low attendance students", "tone": "Alerts", "priority": 8 },
+        { "intent": "leave_requests", "label": "Leave Requests", "query": "show pending leave requests", "tone": "Workflow", "priority": 7 }
+      ]
+    },
+    "parent": {
+      "label": "Parent",
+      "description": "Monitor your ward's attendance, fees, performance, and academic notices.",
+      "quick_actions": [
+        { "intent": "ward_attendance", "label": "Ward Attendance", "query": "show my ward attendance summary", "tone": "Monitoring", "priority": 10 },
+        { "intent": "ward_fees", "label": "Fee Overview", "query": "show my ward fee status", "tone": "Finance", "priority": 9 },
+        { "intent": "ward_performance", "label": "Academic Progress", "query": "show my ward academic performance", "tone": "Progress", "priority": 8 },
+        { "intent": "parent_notices", "label": "Important Notices", "query": "show parent notices", "tone": "Updates", "priority": 7 }
+      ]
+    }
+  },
+  "intent_config": {
+    "attendance": {
+      "intent_priority": 9,
+      "route_confidence_keywords": ["attendance", "present percentage", "attendance dashboard"],
+      "weak_keywords": ["present", "classes"]
+    },
+    "assignments": {
+      "intent_priority": 8,
+      "route_confidence_keywords": ["assignment", "due assignment", "homework"],
+      "weak_keywords": ["task", "project"]
+    },
+    "fees": {
+      "intent_priority": 10,
+      "route_confidence_keywords": ["fees", "fee payment", "fee structure"],
+      "weak_keywords": ["payment", "money"]
+    },
+    "syllabus": {
+      "intent_priority": 7,
+      "route_confidence_keywords": ["syllabus", "course outline"],
+      "weak_keywords": ["topics", "units"]
+    },
+    "performance": {
+      "intent_priority": 8,
+      "route_confidence_keywords": ["result", "marksheet", "grades"],
+      "weak_keywords": ["marks"]
+    }
+  },
+  "canonical_subjects": {
+    "DBMS": {
+      "slug": "dbms",
+      "aliases": ["dbms", "database", "database systems"]
+    },
+    "GEN_AI": {
+      "slug": "gen_ai",
+      "aliases": ["gen ai", "generative ai", "gen-ai"]
+    },
+    "NEURAL_NETWORKS": {
+      "slug": "neural_networks",
+      "aliases": ["neural networks", "nn", "deep learning"]
+    }
+  },
+  "sections": {
+    "attendance": {
+      "requires_auth": true,
+      "required_params": ["student_id"],
+      "last_updated_at": "2026-03-07T12:00:00+05:30",
+      "courses": {
+        "DBMS": {
+          "attendance_template": "/attendance/dbms/{student_id}"
+        },
+        "GEN_AI": {
+          "attendance_template": "/attendance/gen_ai/{student_id}"
+        },
+        "NEURAL_NETWORKS": {
+          "attendance_template": "/attendance/neural_networks/{student_id}"
+        }
+      }
+    },
+    "syllabus": {
+      "requires_auth": false,
+      "last_updated_at": "2026-02-28T12:00:00+05:30",
+      "subjects": {
+        "DBMS": {
+          "page": "/syllabus/dbms",
+          "units": [
+            "Database architecture",
+            "Relational algebra",
+            "Normalization",
+            "Transaction management"
+          ]
+        },
+        "GEN_AI": {
+          "page": "/syllabus/gen_ai",
+          "units": [
+            "LLM fundamentals",
+            "Prompt engineering",
+            "Fine tuning",
+            "AI safety"
+          ]
+        },
+        "NEURAL_NETWORKS": {
+          "page": "/syllabus/neural_networks",
+          "units": [
+            "Perceptron",
+            "Backpropagation",
+            "CNN",
+            "RNN"
+          ]
+        }
+      }
+    },
+    "assignments": {
+      "requires_auth": true,
+      "last_updated_at": "2026-03-06T10:00:00+05:30",
+      "subjects": {
+        "DBMS": {
+          "assignments": [
+            {
+              "assignment_id": "DBMS_A1",
+              "title": "Normalization Case Study",
+              "due_date": "2026-03-15",
+              "status": "open",
+              "page": "/assignments/dbms/a1"
+            },
+            {
+              "assignment_id": "DBMS_A2",
+              "title": "ER Diagram Design",
+              "due_date": "2026-03-22",
+              "status": "open",
+              "page": "/assignments/dbms/a2"
+            }
+          ]
+        },
+        "GEN_AI": {
+          "assignments": [
+            {
+              "assignment_id": "GENAI_A1",
+              "title": "Prompt Engineering Task",
+              "due_date": "2026-03-18",
+              "status": "open",
+              "page": "/assignments/genai/a1"
+            }
+          ]
+        },
+        "NEURAL_NETWORKS": {
+          "assignments": [
+            {
+              "assignment_id": "NN_A1",
+              "title": "Backpropagation Implementation",
+              "due_date": "2026-03-20",
+              "status": "open",
+              "page": "/assignments/nn/a1"
+            }
+          ]
+        }
+      }
+    },
+    "fees": {
+      "requires_auth": true,
+      "pages": {
+        "structure": "/fees/structure.pdf",
+        "pending": "/fees/pending/{student_id}",
+        "receipts": "/fees/receipts/{student_id}"
+      }
+    },
+    "performance": {
+      "requires_auth": true,
+      "semesters": {
+        "sem3": {
+          "marks_page_template": "/performance/{student_id}/sem3"
+        },
+        "sem5": {
+          "marks_page_template": "/performance/{student_id}/sem5"
+        }
+      }
+    }
+  },
+  "student_id_aliases": [
+    "roll no",
+    "roll number",
+    "student id",
+    "registration number"
+  ],
+  "students": {
+    "AI23001": {
+      "name": "Rahul",
+      "semester": 3,
+      "attendance": {
+        "DBMS": { "percentage": "86%", "attended": 43, "total": 50 },
+        "GEN_AI": { "percentage": "91%", "attended": 45, "total": 50 },
+        "NEURAL_NETWORKS": { "percentage": "88%", "attended": 44, "total": 50 }
+      }
+    },
+    "AI23002": { "name": "Aditi Singh", "semester": 3 },
+    "AI23003": { "name": "Rohit Kumar", "semester": 3 },
+    "AI23004": { "name": "Neha Sharma", "semester": 3 },
+    "AI23005": { "name": "Arjun Patel", "semester": 3 },
+    "AI23006": { "name": "Sneha Kapoor", "semester": 3 },
+    "AI23007": { "name": "Vikas Gupta", "semester": 3 },
+    "AI23008": { "name": "Pooja Mishra", "semester": 3 },
+    "AI23009": { "name": "Ankit Yadav", "semester": 3 },
+    "AI23010": { "name": "Meera Jain", "semester": 3 },
+    "AI23011": { "name": "Rahul Saxena", "semester": 5 },
+    "AI23012": { "name": "Divya Agarwal", "semester": 5 },
+    "AI23013": { "name": "Sahil Khanna", "semester": 5 },
+    "AI23014": { "name": "Tanvi Mehta", "semester": 5 },
+    "AI23015": { "name": "Karan Arora", "semester": 5 },
+    "AI23016": { "name": "Simran Gill", "semester": 5 },
+    "AI23017": { "name": "Harsh Tiwari", "semester": 5 },
+    "AI23018": { "name": "Priya Nair", "semester": 5 },
+    "AI23019": { "name": "Aman Bansal", "semester": 5 },
+    "AI23020": { "name": "Nikhil Sharma", "semester": 5 }
+  },
+  "faculty": {
+    "FAC1001": {
+      "name": "Dr. Sharmaji",
+      "department": "School of Engineering & Technology",
+      "subjects": ["DBMS", "GEN_AI"]
+    }
+  },
+  "fallback_templates": {
+    "missing_student_id": "Please provide your student ID or roll number to access this information.",
+    "multiple_subject_match": "I found multiple subjects related to your query. Please specify the subject (DBMS, GEN AI, Neural Networks).",
+    "section_found_no_record": "The section exists but no data was found for your request. Please contact the academic office."
+  }
+}

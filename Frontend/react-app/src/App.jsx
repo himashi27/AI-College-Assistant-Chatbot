@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { BrowserRouter, Link, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
 
-const ADMIN_PASSCODE = 'KRMGU-ADMIN'
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+const ENABLE_DIRECT_REDIRECT = (import.meta.env.VITE_ENABLE_DIRECT_REDIRECT || 'false').toLowerCase() === 'true'
+const DEFAULT_STUDENT_ID = import.meta.env.VITE_DEFAULT_STUDENT_ID || 'AI23001'
+const DEFAULT_PERSONA = 'student'
 
 const moduleItems = [
   { title: 'Admit Card', icon: 'idCard' },
@@ -42,19 +44,70 @@ const sidebarItems = [
   { title: 'Fee Undertaking', icon: 'fee' },
 ]
 
-const suggestionChips = [
-  'Admissions Deadlines',
-  'Scholarships',
-  'Course Catalog',
-  'Campus Map',
-  'Housing',
+const suggestionChipsByPersona = {
+  student: ['Attendance', 'Syllabus', 'Assignments', 'Fees', 'Performance', 'Results'],
+  faculty: ['Today Classes', 'Assignment Reviews', 'Low Attendance', 'Leave Requests', 'Course Plan', 'Student Progress'],
+  parent: ['Ward Attendance', 'Fee Status', 'Performance', 'Exam Updates', 'Academic Notices', 'Contact Mentor'],
+}
+
+const defaultQuickActions = [
+  { label: 'Attendance Summary', query: 'attendance of all subjects', tone: 'Academic' },
+  { label: 'Syllabus Overview', query: 'syllabus of all subjects', tone: 'Course' },
+  { label: 'Due Assignments', query: 'due assignment of all subjects', tone: 'Deadline' },
+  { label: 'Fee Status', query: 'pending fees', tone: 'Finance' },
 ]
 
-const quickActions = [
-  'Apply and admissions checklist',
-  'Registrar and transcripts',
-  'Financial aid and tuition',
-]
+const defaultQuickActionsByPersona = {
+  student: defaultQuickActions,
+  faculty: [
+    { label: "Today's Classes", query: 'show my classes for today', tone: 'Teaching' },
+    { label: 'Pending Reviews', query: 'show pending assignment reviews', tone: 'Evaluation' },
+    { label: 'Low Attendance Alerts', query: 'show low attendance students', tone: 'Alerts' },
+    { label: 'Leave Requests', query: 'show pending leave requests', tone: 'Workflow' },
+  ],
+  parent: [
+    { label: 'Ward Attendance', query: 'show my ward attendance summary', tone: 'Monitoring' },
+    { label: 'Fee Overview', query: 'show my ward fee status', tone: 'Finance' },
+    { label: 'Academic Progress', query: 'show my ward academic performance', tone: 'Progress' },
+    { label: 'Important Notices', query: 'show parent notices', tone: 'Updates' },
+  ],
+}
+
+const getWelcomeMessage = (persona) => {
+  const personaKey = (persona || DEFAULT_PERSONA).toLowerCase()
+  const messages = {
+    student: 'Welcome to the University AI Assistant. I can help with attendance, assignments, syllabus, fees, and results. What do you need today?',
+    faculty: 'Welcome to the Faculty Assistant. I can help with classes, student progress, reviews, and academic workflow. What would you like to check?',
+    parent: 'Welcome to the Parent Assistant. I can help with your ward attendance, fees, performance, and important notices. What would you like to know?',
+  }
+
+  return {
+    id: 1,
+    role: 'bot',
+    text: messages[personaKey] || messages.student,
+  }
+}
+
+const getStoredPortalAuth = () => {
+  try {
+    const raw = localStorage.getItem('portal_auth')
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+const clearPortalSession = () => {
+  ;[
+    'portal_auth',
+    'portal_user_id',
+    'student_id',
+    'active_persona',
+    'chat_owner_key',
+    'chat_messages',
+    'chat_session_id',
+  ].forEach((key) => localStorage.removeItem(key))
+}
 
 const iconMap = {
   idCard: (
@@ -199,28 +252,6 @@ const iconMap = {
   ),
 }
 
-const adminStats = [
-  { label: 'Total Queries', value: '12,480', trend: '+8% this week' },
-  { label: 'Active Users', value: '1,284', trend: '+5% this week' },
-  { label: 'Avg Response', value: '1.6s', trend: 'P95 2.3s' },
-  { label: 'CSAT Score', value: '4.4/5', trend: 'Based on 620 ratings' },
-]
-
-const recentQueries = [
-  { user: 'Ananya', query: 'Scholarship eligibility for CSE', status: 'Resolved', time: '2 min ago' },
-  { user: 'Rohit', query: 'Exam timetable for Semester 4', status: 'In progress', time: '12 min ago' },
-  { user: 'Sneha', query: 'Hostel fees due date', status: 'Resolved', time: '20 min ago' },
-  { user: 'Karan', query: 'Transcript request process', status: 'Escalated', time: '35 min ago' },
-]
-
-const topIntents = [
-  { name: 'Admissions', value: 28 },
-  { name: 'Fees & Payments', value: 22 },
-  { name: 'Timetable', value: 18 },
-  { name: 'Scholarships', value: 14 },
-  { name: 'Hostel', value: 10 },
-]
-
 const feedbackList = [
   { text: 'Quick response and clear steps for admissions.', rating: 5 },
   { text: 'Needs more details on hostel availability.', rating: 3 },
@@ -234,7 +265,7 @@ const systemStatus = [
   { name: 'Notifications', status: 'Operational' },
 ]
 
-const DashboardLayout = ({ children, showAdminLink = false, onLogout }) => {
+const DashboardLayout = ({ children, showAdminLink = false, onLogout, currentUser }) => {
   const [sidebarExpanded, setSidebarExpanded] = useState(false)
   const sidebarTimer = useRef()
 
@@ -334,8 +365,13 @@ const DashboardLayout = ({ children, showAdminLink = false, onLogout }) => {
               </svg>
             </button>
             <span className="h-6 w-px bg-[#e5edf8]" />
-            <span className="text-sm font-semibold">HIMANSHI</span>
-            <div className="grid h-9 w-9 place-items-center rounded-full bg-[#e8f0ff] text-[#1f4ea7]">H</div>
+            <div className="flex flex-col items-end leading-tight">
+              <span className="text-sm font-semibold">{currentUser?.displayName || 'Portal User'}</span>
+              <span className="text-[11px] uppercase tracking-wide text-slate-400">{currentUser?.personaLabel || 'Student'}</span>
+            </div>
+            <div className="grid h-9 w-9 place-items-center rounded-full bg-[#e8f0ff] text-[#1f4ea7]">
+              {(currentUser?.displayName || 'P').slice(0, 1).toUpperCase()}
+            </div>
           </div>
         </header>
 
@@ -351,142 +387,389 @@ const DashboardLayout = ({ children, showAdminLink = false, onLogout }) => {
   )
 }
 
-const AdminDashboard = () => (
-  <div className="space-y-8">
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <h2 className="text-xl font-semibold text-slate-800">Admin Dashboard</h2>
-        <p className="text-sm text-slate-500">Monitor chatbot performance, usage, and system health.</p>
-      </div>
-      <div className="flex gap-2">
-        <button type="button" className="rounded-full border border-[#e5edf8] bg-white px-4 py-2 text-sm font-semibold text-slate-600">
-          Export
-        </button>
-        <button type="button" className="rounded-full bg-royal px-4 py-2 text-sm font-semibold text-white shadow">
-          Add Report
-        </button>
-      </div>
-    </div>
+const AdminDashboard = ({ adminToken, onUnauthorized }) => {
+  const [stats, setStats] = useState(null)
+  const [recentQueries, setRecentQueries] = useState([])
+  const [topIntents, setTopIntents] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      {adminStats.map((item) => (
-        <div key={item.label} className="rounded-2xl border border-[#e5edf8] bg-white p-4 shadow-sm">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{item.label}</p>
-          <p className="mt-2 text-2xl font-semibold text-slate-800">{item.value}</p>
-          <p className="mt-1 text-xs text-slate-500">{item.trend}</p>
-        </div>
-      ))}
-    </div>
+  useEffect(() => {
+    let mounted = true
 
-    <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
-      <div className="rounded-2xl border border-[#e5edf8] bg-white p-5 shadow-sm">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-slate-700">Recent Queries</h3>
-          <button type="button" className="text-xs font-semibold text-royal">View all</button>
-        </div>
-        <div className="mt-4 overflow-hidden rounded-xl border border-[#eef2f8]">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-[#f8faff] text-xs uppercase text-slate-400">
-              <tr>
-                <th className="px-4 py-3">User</th>
-                <th className="px-4 py-3">Query</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Time</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recentQueries.map((item) => (
-                <tr key={item.user} className="border-t border-[#eef2f8] text-slate-600">
-                  <td className="px-4 py-3 font-semibold text-slate-700">{item.user}</td>
-                  <td className="px-4 py-3">{item.query}</td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                        item.status === 'Resolved'
-                          ? 'bg-emerald-50 text-emerald-600'
-                          : item.status === 'Escalated'
-                          ? 'bg-rose-50 text-rose-600'
-                          : 'bg-amber-50 text-amber-600'
-                      }`}
-                    >
-                      {item.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-xs text-slate-400">{item.time}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+    const loadAdminData = async (quiet = false) => {
+      if (!quiet) {
+        setLoading(true)
+      }
+      try {
+        const headers = adminToken ? { Authorization: `Bearer ${adminToken}` } : {}
+        const [statsRes, recentRes, intentsRes] = await Promise.all([
+          fetch(`${API_BASE_URL}/api/admin/stats`, { headers }),
+          fetch(`${API_BASE_URL}/api/admin/recent-queries`, { headers }),
+          fetch(`${API_BASE_URL}/api/admin/top-intents`, { headers }),
+        ])
 
-      <div className="space-y-6">
-        <div className="rounded-2xl border border-[#e5edf8] bg-white p-5 shadow-sm">
-          <h3 className="text-sm font-semibold text-slate-700">Top Intents</h3>
-          <div className="mt-4 space-y-3">
-            {topIntents.map((intent) => (
-              <div key={intent.name} className="flex items-center justify-between">
-                <span className="text-sm font-medium text-slate-600">{intent.name}</span>
-                <div className="flex items-center gap-2">
-                  <div className="h-2 w-24 rounded-full bg-[#eef2f8]">
-                    <div className="h-2 rounded-full bg-royal" style={{ width: `${intent.value}%` }} />
-                  </div>
-                  <span className="text-xs text-slate-400">{intent.value}%</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        if (
+          statsRes.status === 401 ||
+          recentRes.status === 401 ||
+          intentsRes.status === 401
+        ) {
+          if (onUnauthorized) {
+            onUnauthorized()
+          }
+          return
+        }
 
-        <div className="rounded-2xl border border-[#e5edf8] bg-white p-5 shadow-sm">
-          <h3 className="text-sm font-semibold text-slate-700">System Status</h3>
-          <div className="mt-4 space-y-3 text-sm">
-            {systemStatus.map((item) => (
-              <div key={item.name} className="flex items-center justify-between">
-                <span className="text-slate-600">{item.name}</span>
-                <span
-                  className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                    item.status === 'Operational' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
-                  }`}
-                >
-                  {item.status}
-                </span>
-              </div>
-            ))}
-          </div>
+        if (!statsRes.ok || !recentRes.ok || !intentsRes.ok) {
+          throw new Error('Failed to load admin analytics')
+        }
+
+        const [statsPayload, recentPayload, intentsPayload] = await Promise.all([
+          statsRes.json(),
+          recentRes.json(),
+          intentsRes.json(),
+        ])
+
+        if (!mounted) return
+        setError('')
+        setStats(statsPayload)
+        setRecentQueries(Array.isArray(recentPayload) ? recentPayload : [])
+        setTopIntents(Array.isArray(intentsPayload) ? intentsPayload : [])
+      } catch {
+        if (!mounted) return
+        setError('Unable to load live admin analytics right now.')
+      } finally {
+        if (mounted && !quiet) {
+          setLoading(false)
+        }
+      }
+    }
+
+    loadAdminData(false)
+    const timer = window.setInterval(() => {
+      loadAdminData(true)
+    }, 15000)
+
+    return () => {
+      mounted = false
+      window.clearInterval(timer)
+    }
+  }, [adminToken, onUnauthorized])
+
+  const statsCards = [
+    { label: 'Total Queries', value: String(stats?.total_queries ?? 0), trend: 'Assistant responses logged' },
+    { label: 'Active Users', value: String(stats?.active_users ?? 0), trend: 'Unique users in sessions' },
+    { label: 'Avg Response', value: `${stats?.avg_latency_ms ?? 0} ms`, trend: 'Average assistant latency' },
+    { label: 'CSAT Score', value: stats?.csat ? `${stats.csat}/5` : 'N/A', trend: 'From feedback ratings' },
+  ]
+
+  const maxIntentValue = Math.max(1, ...topIntents.map((intent) => intent.value || 0))
+
+  return (
+    <div className="space-y-8">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-semibold text-slate-800">Admin Dashboard</h2>
+          <p className="text-sm text-slate-500">Monitor chatbot performance, usage, and system health.</p>
+        </div>
+        <div className="flex gap-2">
+          <button type="button" className="rounded-full border border-[#e5edf8] bg-white px-4 py-2 text-sm font-semibold text-slate-600">
+            Export
+          </button>
+          <button type="button" className="rounded-full bg-royal px-4 py-2 text-sm font-semibold text-white shadow">
+            Add Report
+          </button>
         </div>
       </div>
-    </div>
 
-    <div className="rounded-2xl border border-[#e5edf8] bg-white p-5 shadow-sm">
-      <h3 className="text-sm font-semibold text-slate-700">Recent Feedback</h3>
-      <div className="mt-4 grid gap-4 md:grid-cols-3">
-        {feedbackList.map((item, index) => (
-          <div key={item.text} className="rounded-2xl border border-[#eef2f8] bg-[#f8faff] p-4">
-            <p className="text-sm text-slate-600">{item.text}</p>
-            <div className="mt-3 flex items-center gap-2 text-xs font-semibold text-amber-500">
-              {'Ã¢Ëœâ€¦'.repeat(item.rating)}
-              <span className="text-slate-400">{index + 1}</span>
-            </div>
+      {error && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">
+          {error}
+        </div>
+      )}
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {statsCards.map((item) => (
+          <div key={item.label} className="rounded-2xl border border-[#e5edf8] bg-white p-4 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{item.label}</p>
+            <p className="mt-2 text-2xl font-semibold text-slate-800">{loading ? '...' : item.value}</p>
+            <p className="mt-1 text-xs text-slate-500">{item.trend}</p>
           </div>
         ))}
       </div>
-    </div>
-  </div>
-)
 
+      <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
+        <div className="rounded-2xl border border-[#e5edf8] bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-slate-700">Recent Queries</h3>
+            <button type="button" className="text-xs font-semibold text-royal">View all</button>
+          </div>
+          <div className="mt-4 overflow-hidden rounded-xl border border-[#eef2f8]">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-[#f8faff] text-xs uppercase text-slate-400">
+                <tr>
+                  <th className="px-4 py-3">Session</th>
+                  <th className="px-4 py-3">Query</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentQueries.length === 0 && !loading ? (
+                  <tr className="border-t border-[#eef2f8] text-slate-500">
+                    <td className="px-4 py-3" colSpan={4}>No recent queries found.</td>
+                  </tr>
+                ) : (
+                  recentQueries.map((item, index) => (
+                    <tr key={`${item.session_id}-${index}`} className="border-t border-[#eef2f8] text-slate-600">
+                      <td className="px-4 py-3 font-semibold text-slate-700">{item.session_id || '-'}</td>
+                      <td className="px-4 py-3">{item.query || '-'}</td>
+                      <td className="px-4 py-3">
+                        <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-600">
+                          Logged
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-slate-400">
+                        {item.created_at ? new Date(item.created_at).toLocaleString() : '-'}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          <div className="rounded-2xl border border-[#e5edf8] bg-white p-5 shadow-sm">
+            <h3 className="text-sm font-semibold text-slate-700">Top Intents</h3>
+            <div className="mt-4 space-y-3">
+              {topIntents.length === 0 && !loading ? (
+                <p className="text-sm text-slate-500">No intent data available yet.</p>
+              ) : (
+                topIntents.map((intent) => (
+                  <div key={intent.name} className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-slate-600">{intent.name}</span>
+                    <div className="flex items-center gap-2">
+                      <div className="h-2 w-24 rounded-full bg-[#eef2f8]">
+                        <div
+                          className="h-2 rounded-full bg-royal"
+                          style={{ width: `${Math.max(8, Math.round(((intent.value || 0) / maxIntentValue) * 100))}%` }}
+                        />
+                      </div>
+                      <span className="text-xs text-slate-400">{intent.value || 0}</span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-[#e5edf8] bg-white p-5 shadow-sm">
+            <h3 className="text-sm font-semibold text-slate-700">System Status</h3>
+            <div className="mt-4 space-y-3 text-sm">
+              {systemStatus.map((item) => (
+                <div key={item.name} className="flex items-center justify-between">
+                  <span className="text-slate-600">{item.name}</span>
+                  <span
+                    className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                      item.status === 'Operational' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
+                    }`}
+                  >
+                    {item.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-[#e5edf8] bg-white p-5 shadow-sm">
+        <h3 className="text-sm font-semibold text-slate-700">Recent Feedback</h3>
+        <div className="mt-4 grid gap-4 md:grid-cols-3">
+          {feedbackList.map((item, index) => (
+            <div key={item.text} className="rounded-2xl border border-[#eef2f8] bg-[#f8faff] p-4">
+              <p className="text-sm text-slate-600">{item.text}</p>
+              <div className="mt-3 flex items-center gap-2 text-xs font-semibold text-amber-500">
+                {'*'.repeat(item.rating)}
+                <span className="text-slate-400">{index + 1}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
 const ChatbotPanel = () => {
-  const [messages, setMessages] = useState([
-    {
-      id: 1,
-      role: 'bot',
-      text: 'Welcome to the University AI Assistant. I can help with admissions, courses, financial aid, housing, and campus services. What do you need today?',
-    },
-  ])
+  const navigate = useNavigate()
+  const location = useLocation()
+  const initialAuth = getStoredPortalAuth()
+  const initialPersona = initialAuth?.persona || localStorage.getItem('active_persona') || DEFAULT_PERSONA
+  const initialUserId = initialAuth?.userId || localStorage.getItem('portal_user_id') || localStorage.getItem('student_id') || DEFAULT_STUDENT_ID
+  const [selectedPersona] = useState(initialPersona)
+  const [messages, setMessages] = useState([getWelcomeMessage(initialPersona)])
   const [input, setInput] = useState('')
   const [isSending, setIsSending] = useState(false)
+  const [feedbackStatus, setFeedbackStatus] = useState({})
+  const [quickActions, setQuickActions] = useState(defaultQuickActionsByPersona[initialPersona] || defaultQuickActions)
+  const [chatHydrated, setChatHydrated] = useState(false)
   const endRef = useRef(null)
-  const sessionIdRef = useRef(`web-${Date.now()}`)
+  const studentIdRef = useRef(initialUserId)
+  const sessionIdRef = useRef(localStorage.getItem('chat_session_id') || `web-${Date.now()}`)
+  const activeSuggestionChips = suggestionChipsByPersona[selectedPersona] || suggestionChipsByPersona.student
+
+  useEffect(() => {
+    localStorage.setItem('chat_session_id', sessionIdRef.current)
+    localStorage.setItem('student_id', studentIdRef.current)
+  }, [])
+
+  useEffect(() => {
+    const activeAuth = getStoredPortalAuth()
+    const activeStudentId = activeAuth?.userId || localStorage.getItem('portal_user_id') || localStorage.getItem('student_id') || DEFAULT_STUDENT_ID
+    const activePersona = localStorage.getItem('active_persona') || selectedPersona || DEFAULT_PERSONA
+    const chatOwnerKey = localStorage.getItem('chat_owner_key')
+    const currentOwnerKey = `${activePersona}:${activeStudentId}`
+
+    // Reset once when user identity or persona changes, then preserve history for that combination.
+    if (chatOwnerKey !== currentOwnerKey) {
+      studentIdRef.current = activeStudentId
+      sessionIdRef.current = `web-${Date.now()}`
+      localStorage.setItem('chat_owner_key', currentOwnerKey)
+      localStorage.setItem('chat_session_id', sessionIdRef.current)
+      localStorage.setItem('student_id', activeStudentId)
+      localStorage.setItem('active_persona', activePersona)
+      localStorage.setItem('chat_messages', JSON.stringify([getWelcomeMessage(activePersona)]))
+      setMessages([getWelcomeMessage(activePersona)])
+      setChatHydrated(true)
+      return
+    }
+
+    const saved = localStorage.getItem('chat_messages')
+    if (!saved) {
+      setChatHydrated(true)
+      return
+    }
+    try {
+      const parsed = JSON.parse(saved)
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        setMessages(parsed)
+      }
+    } catch {
+      // ignore broken cached payload
+    } finally {
+      setChatHydrated(true)
+    }
+  }, [selectedPersona])
+
+  useEffect(() => {
+    if (!chatHydrated) return
+    localStorage.setItem('chat_messages', JSON.stringify(messages))
+  }, [chatHydrated, messages])
+
+  useEffect(() => {
+    let active = true
+    const loadQuickActions = async () => {
+      setQuickActions(defaultQuickActionsByPersona[selectedPersona] || defaultQuickActions)
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/portal/quick-actions?role=${encodeURIComponent(selectedPersona)}`, {
+          headers: {
+            'X-Student-Id': studentIdRef.current,
+          },
+        })
+        if (!response.ok) return
+        const payload = await response.json()
+        const actions = Array.isArray(payload?.actions)
+          ? payload.actions
+              .filter((item) => item && item.label && item.query)
+              .map((item) => ({
+                label: item.label,
+                query: item.query,
+                tone: item.tone || 'General',
+              }))
+          : []
+        if (active && actions.length > 0) {
+          setQuickActions(actions)
+        }
+      } catch {
+        // keep default quick actions
+      }
+    }
+    loadQuickActions()
+    return () => {
+      active = false
+    }
+  }, [selectedPersona])
+
+  const formatAssignmentSummary = (payload) => {
+    if (!payload || !Array.isArray(payload.assignments) || payload.assignments.length === 0) {
+      return 'No open due assignments found right now.'
+    }
+
+    if (payload.subject) {
+      const lines = [`Assignments for ${payload.subject}:`]
+      payload.assignments.forEach((item) => {
+        lines.push(`- ${item.title} | Due: ${item.due_date} | Status: ${item.status}`)
+      })
+      return lines.join('\n')
+    }
+
+    const grouped = payload.assignments.reduce((acc, item) => {
+      const key = item.subject || 'Unknown'
+      if (!acc[key]) acc[key] = []
+      acc[key].push(item)
+      return acc
+    }, {})
+
+    const lines = ['Assignments (All Subjects):']
+    Object.entries(grouped).forEach(([subjectName, rows]) => {
+      lines.push(`${subjectName}:`)
+      rows.forEach((item) => {
+        lines.push(`- ${item.title} | Due: ${item.due_date} | Status: ${item.status}`)
+      })
+    })
+    return lines.join('\n')
+  }
+
+  const removeRawUrls = (text) => {
+    if (!text) return ''
+    return String(text)
+      .replace(/https?:\/\/[^\s]+/gi, '')
+      .replace(/(\/[A-Za-z0-9._-]+){2,}/g, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim()
+  }
+
+  const safeBotText = (text) => {
+    const cleaned = removeRawUrls(text)
+    return cleaned || 'Here is the information you requested.'
+  }
+
+  const sendFeedback = async (messageId, rating) => {
+    if (!messageId || feedbackStatus[messageId]) return
+
+    setFeedbackStatus((prev) => ({ ...prev, [messageId]: 'sending' }))
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/feedback`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Student-Id': studentIdRef.current,
+        },
+        body: JSON.stringify({
+          message_id: String(messageId),
+          rating,
+        }),
+      })
+      if (!response.ok) {
+        throw new Error('Feedback request failed')
+      }
+      setFeedbackStatus((prev) => ({ ...prev, [messageId]: 'done' }))
+    } catch {
+      setFeedbackStatus((prev) => ({ ...prev, [messageId]: 'error' }))
+    }
+  }
 
   const sendMessage = async (text) => {
     const cleaned = text.trim()
@@ -503,31 +786,122 @@ const ChatbotPanel = () => {
     setIsSending(true)
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/chat`, {
+      const routeRes = await fetch(`${API_BASE_URL}/api/query/route`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-Student-Id': studentIdRef.current,
+        },
+        body: JSON.stringify({
+          message: cleaned,
+          session_id: sessionIdRef.current,
+          user_id: studentIdRef.current,
+          role: selectedPersona,
+          current_page: location.pathname,
+        }),
+      })
+
+      if (!routeRes.ok) {
+        throw new Error('Route request failed')
+      }
+
+      const routePayload = await routeRes.json()
+
+      if (routePayload.action === 'navigate' && routePayload.navigation?.url) {
+        const targetLabel = routePayload.navigation.label || 'requested section'
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            messageId: null,
+            role: 'bot',
+            text: safeBotText(ENABLE_DIRECT_REDIRECT
+              ? `Opening ${targetLabel}.`
+              : `${targetLabel} is ready.`),
+          },
+        ])
+
+        if (ENABLE_DIRECT_REDIRECT) {
+          window.setTimeout(() => {
+            navigate(routePayload.navigation.url)
+          }, 450)
+        }
+        return
+      }
+
+      if (routePayload.action === 'assignment_summary') {
+        const assignmentRes = await fetch(`${API_BASE_URL}/api/assignments/parse-due`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Student-Id': studentIdRef.current,
+          },
+          body: JSON.stringify({
+            message: cleaned,
+            current_page: location.pathname,
+          }),
+        })
+
+        if (!assignmentRes.ok) {
+          throw new Error('Assignment parse request failed')
+        }
+
+        const assignmentPayload = await assignmentRes.json()
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            messageId: null,
+            role: 'bot',
+            text: safeBotText(formatAssignmentSummary(assignmentPayload)),
+          },
+        ])
+        return
+      }
+
+      if (routePayload.action === 'clarify') {
+        const suggestions = routePayload?.data?.suggestions?.length
+          ? ` Suggestions: ${routePayload.data.suggestions.join(', ')}`
+          : ''
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 1,
+            messageId: null,
+            role: 'bot',
+            text: safeBotText(`${routePayload.clarification || 'Please clarify your request.'}${suggestions}`),
+          },
+        ])
+        return
+      }
+
+      const chatRes = await fetch(`${API_BASE_URL}/api/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Student-Id': studentIdRef.current,
         },
         body: JSON.stringify({
           session_id: sessionIdRef.current,
-          user_id: 'web-student',
+          user_id: studentIdRef.current,
           message: cleaned,
-          role: 'student',
+          role: selectedPersona,
           language: 'en',
         }),
       })
 
-      if (!response.ok) {
+      if (!chatRes.ok) {
         throw new Error('Chat request failed')
       }
 
-      const payload = await response.json()
+      const payload = await chatRes.json()
       setMessages((prev) => [
         ...prev,
         {
           id: payload.message_id || Date.now() + 1,
+          messageId: payload.message_id || null,
           role: 'bot',
-          text: payload.reply || 'I could not generate a response right now.',
+          text: safeBotText(payload.reply || 'I could not generate a response right now.'),
         },
       ])
     } catch {
@@ -535,8 +909,9 @@ const ChatbotPanel = () => {
         ...prev,
         {
           id: Date.now() + 1,
+          messageId: null,
           role: 'bot',
-          text: 'I am having trouble reaching the server right now. Please try again in a moment.',
+          text: safeBotText('I am having trouble reaching the server right now. Please try again in a moment.'),
         },
       ])
     } finally {
@@ -554,18 +929,22 @@ const ChatbotPanel = () => {
         <div className="h-11 w-11 rounded-xl bg-white p-1">
           <img src="/logo.png" alt="K.R. Mangalam University" className="h-full w-full rounded-lg object-contain" />
         </div>
-        <div>
+        <div className="min-w-0 flex-1">
           <h3 className="font-outfit text-lg font-semibold">Campus Guide</h3>
           <div className="flex items-center gap-2 text-xs text-white/80">
             <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]" />
             Online
           </div>
         </div>
+        <span className="rounded-full border border-white/30 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-white/90">
+          {selectedPersona}
+        </span>
       </div>
 
       <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
-        <div className="flex flex-wrap gap-2">
-          {suggestionChips.map((chip) => (
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+          {activeSuggestionChips.map((chip) => (
             <button
               key={chip}
               type="button"
@@ -575,34 +954,63 @@ const ChatbotPanel = () => {
               {chip}
             </button>
           ))}
+          </div>
         </div>
 
         {messages.map((message) => (
           <div key={message.id} className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
-            <div
-              className={
-                message.role === 'user'
-                  ? 'max-w-[80%] rounded-2xl rounded-br-md bg-royal px-4 py-3 text-sm text-white shadow-lg'
-                  : 'max-w-[80%] rounded-2xl rounded-bl-md bg-white px-4 py-3 text-sm text-slate-800 shadow'
-              }
-            >
-              {message.text}
+            <div className="max-w-[80%]">
+              <div
+                className={
+                  message.role === 'user'
+                    ? 'rounded-2xl rounded-br-md bg-royal px-4 py-3 text-sm text-white shadow-lg whitespace-pre-line'
+                    : 'rounded-2xl rounded-bl-md bg-white px-4 py-3 text-sm text-slate-800 shadow whitespace-pre-line'
+                }
+              >
+                {message.text}
+              </div>
+              {message.role === 'bot' && message.messageId && (
+                <div className="mt-2 flex items-center gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => sendFeedback(message.messageId, 5)}
+                    disabled={feedbackStatus[message.messageId] === 'sending' || feedbackStatus[message.messageId] === 'done'}
+                    className="rounded-full border border-[#d7d7d7] bg-white px-3 py-1 text-slate-600 disabled:opacity-50"
+                  >
+                    Like
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => sendFeedback(message.messageId, 1)}
+                    disabled={feedbackStatus[message.messageId] === 'sending' || feedbackStatus[message.messageId] === 'done'}
+                    className="rounded-full border border-[#d7d7d7] bg-white px-3 py-1 text-slate-600 disabled:opacity-50"
+                  >
+                    Dislike
+                  </button>
+                  {feedbackStatus[message.messageId] === 'done' && <span className="text-emerald-600">Feedback saved</span>}
+                  {feedbackStatus[message.messageId] === 'error' && <span className="text-rose-600">Try again</span>}
+                </div>
+              )}
             </div>
           </div>
         ))}
 
-        <div className="rounded-2xl border border-[#efe6d8] bg-white">
+        <div className="rounded-2xl border border-[#e9decc] bg-white shadow-sm">
+          <div className="border-b border-[#efe6d8] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Quick Actions</div>
           {quickActions.map((item, index) => (
             <button
-              key={item}
+              key={item.label}
               type="button"
-              onClick={() => sendMessage(item)}
-              className={`flex w-full items-center justify-between px-4 py-4 text-left text-sm font-medium text-slate-800 transition hover:bg-[#faf4ea] ${
+              onClick={() => sendMessage(item.query)}
+              className={`flex w-full items-center justify-between px-4 py-3 text-left transition hover:bg-[#faf4ea] ${
                 index !== quickActions.length - 1 ? 'border-b border-[#efe6d8]' : ''
               }`}
             >
-              <span>{item}</span>
-              <span className="text-xl text-slate-400">&gt;</span>
+              <div className="flex min-w-0 flex-col">
+                <span className="truncate text-sm font-semibold text-slate-800">{item.label}</span>
+                <span className="text-xs text-slate-500">{item.tone}</span>
+              </div>
+              <span className="text-lg font-semibold text-slate-400">&gt;</span>
             </button>
           ))}
         </div>
@@ -640,17 +1048,23 @@ const ChatbotPanel = () => {
   )
 }
 const AdminLogin = ({ onLogin }) => {
-  const [passcode, setPasscode] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault()
-    if (onLogin(passcode)) {
+    setLoading(true)
+    const success = await onLogin(email, password)
+    setLoading(false)
+    if (success) {
       setError('')
-      setPasscode('')
+      setEmail('')
+      setPassword('')
       return
     }
-    setError('Invalid passcode. Access denied.')
+    setError('Invalid admin credentials or missing admin role.')
   }
 
   return (
@@ -658,37 +1072,473 @@ const AdminLogin = ({ onLogin }) => {
       <div className="w-full max-w-md rounded-3xl border border-[#e5edf8] bg-white p-8 shadow-lg">
         <h2 className="text-xl font-semibold text-slate-800">Admin Access</h2>
         <p className="mt-2 text-sm text-slate-500">
-          This area is restricted. Enter the admin passcode to continue.
+          This area is restricted. Sign in with an allowed admin email.
         </p>
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
           <div>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">Passcode</label>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">Email</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              className="mt-2 w-full rounded-2xl border border-[#e5edf8] px-4 py-3 text-sm text-slate-700 outline-none focus:border-royal"
+              placeholder="admin@example.com"
+              autoComplete="email"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">Password</label>
             <input
               type="password"
-              value={passcode}
-              onChange={(event) => setPasscode(event.target.value)}
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
               className="mt-2 w-full rounded-2xl border border-[#e5edf8] px-4 py-3 text-sm text-slate-700 outline-none focus:border-royal"
-              placeholder="Enter admin passcode"
+              placeholder="Enter password"
+              autoComplete="current-password"
             />
           </div>
           {error && <p className="text-sm text-rose-500">{error}</p>}
           <button
             type="submit"
+            disabled={loading}
             className="w-full rounded-2xl bg-royal px-4 py-3 text-sm font-semibold text-white shadow"
           >
-            Unlock Admin
+            {loading ? 'Signing in...' : 'Sign in'}
           </button>
-          <p className="text-center text-xs text-slate-400">
-            Update the passcode in <code className="font-semibold">ADMIN_PASSCODE</code> inside <code className="font-semibold">App.jsx</code>.
-          </p>
         </form>
       </div>
     </div>
   )
 }
 
-const LandingPage = () => {
+const PortalLoginLanding = () => {
+  const auth = getStoredPortalAuth()
+
+  if (auth?.userId) {
+    return <Navigate to="/" replace />
+  }
+
+  return (
+    <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,_#eef5ff,_#f6f0e5_58%,_#efe5d3)] px-4 py-10">
+      <div className="mx-auto flex min-h-[85vh] w-full max-w-xl flex-col items-center justify-center">
+        <div className="w-full rounded-[34px] border border-white/70 bg-white/85 p-8 shadow-[0_32px_90px_rgba(31,78,167,0.14)] backdrop-blur">
+          <div className="flex flex-col items-center text-center">
+            <img src="/logo.png" alt="K.R. Mangalam University" className="h-32 w-32 object-contain sm:h-40 sm:w-40" />
+            <p className="mt-5 text-xs font-semibold uppercase tracking-[0.35em] text-[#4f8fe9]">Campus Access</p>
+            <h1 className="mt-3 font-outfit text-3xl font-semibold text-slate-800 sm:text-4xl">Sign in to your portal</h1>
+          </div>
+
+          <div className="mt-8 grid gap-4 sm:grid-cols-2">
+            <Link
+              to="/login/student"
+              className="group rounded-[26px] border border-[#dbe7fb] bg-[linear-gradient(180deg,#ffffff,#eef5ff)] p-5 shadow-sm transition hover:-translate-y-1 hover:shadow-lg"
+            >
+              <div className="flex items-center gap-4">
+                <div className="grid h-14 w-14 place-items-center rounded-2xl bg-[#4f8fe9] text-lg font-bold text-white shadow-md">S</div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#4f8fe9]">Student</p>
+                  <h2 className="mt-1 text-xl font-semibold text-slate-800">Student Login</h2>
+                </div>
+              </div>
+            </Link>
+
+            <Link
+              to="/login/staff"
+              className="group rounded-[26px] border border-[#dbe7fb] bg-[linear-gradient(180deg,#ffffff,#eef5ff)] p-5 shadow-sm transition hover:-translate-y-1 hover:shadow-lg"
+            >
+              <div className="flex items-center gap-4">
+                <div className="grid h-14 w-14 place-items-center rounded-2xl bg-[#1f4ea7] text-lg font-bold text-white shadow-md">T</div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#1f4ea7]">Staff</p>
+                  <h2 className="mt-1 text-xl font-semibold text-slate-800">Staff Login</h2>
+                </div>
+              </div>
+            </Link>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const PersonaLoginPage = () => {
+  const navigate = useNavigate()
+  const { persona = 'student' } = useParams()
+  const normalizedPersona = persona === 'staff' ? 'staff' : 'student'
+  const [email, setEmail] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const auth = getStoredPortalAuth()
+  if (auth?.userId) {
+    return <Navigate to="/" replace />
+  }
+
+  const handleSubmit = async (event) => {
+    event.preventDefault()
+    setLoading(true)
+    setError('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: email.trim(),
+          persona: normalizedPersona,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error('LOGIN_FAILED')
+      }
+
+      const payload = await response.json()
+      const nextAuth = {
+        persona: payload.persona,
+        userId: payload.user_id,
+        email: payload.email,
+        displayName: payload.display_name,
+      }
+
+      clearPortalSession()
+      localStorage.setItem('portal_auth', JSON.stringify(nextAuth))
+      localStorage.setItem('portal_user_id', payload.user_id)
+      localStorage.setItem('active_persona', payload.persona)
+      if (payload.persona === 'student') {
+        localStorage.setItem('student_id', payload.user_id)
+      }
+
+      navigate('/', { replace: true })
+    } catch {
+      setError('This Outlook ID is not mapped yet for the selected login type.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,_#edf4ff,_#f7f1e7_60%,_#efe5d3)] px-4 py-8">
+      <div className="mx-auto flex min-h-[88vh] w-full max-w-lg flex-col justify-center">
+        <div className="rounded-[34px] border border-white/70 bg-white/90 p-8 shadow-[0_32px_90px_rgba(31,78,167,0.14)] backdrop-blur">
+          <button
+            type="button"
+            onClick={() => navigate('/login')}
+            className="rounded-full border border-[#dbe7fb] px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500"
+          >
+            Back
+          </button>
+
+          <div className="mt-6 flex flex-col items-center text-center">
+            <img src="/logo.png" alt="K.R. Mangalam University" className="h-28 w-28 object-contain sm:h-32 sm:w-32" />
+            <p className="mt-5 text-xs font-semibold uppercase tracking-[0.35em] text-[#4f8fe9]">
+              {normalizedPersona === 'staff' ? 'Staff Access' : 'Student Access'}
+            </p>
+            <h1 className="mt-3 font-outfit text-3xl font-semibold text-slate-800">Enter your Outlook ID</h1>
+            <p className="mt-3 text-sm text-slate-500">
+              We will use your college email to identify the correct portal profile and open your dashboard.
+            </p>
+          </div>
+
+          <form onSubmit={handleSubmit} className="mt-8 space-y-5">
+            <div>
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">Official Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                placeholder={normalizedPersona === 'staff' ? 'name@krmangalam.edu.in' : 'student@krmangalam.edu.in'}
+                className="mt-2 w-full rounded-2xl border border-[#dbe7fb] bg-[#fbfdff] px-4 py-4 text-sm text-slate-700 outline-none transition focus:border-[#4f8fe9]"
+                autoComplete="email"
+                required
+              />
+            </div>
+
+            {error && <p className="text-sm text-rose-500">{error}</p>}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full rounded-2xl bg-[linear-gradient(135deg,#4f8fe9,#6f7ef4)] px-4 py-4 text-sm font-semibold text-white shadow-lg disabled:opacity-70"
+            >
+              {loading ? 'Checking account...' : 'Continue to Portal'}
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const HomePage = () => (
+  <div className="grid grid-cols-2 gap-x-5 gap-y-7 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+    {moduleItems.map((item) => (
+      <button
+        key={item.title}
+        type="button"
+        className="flex flex-col items-center gap-3 rounded-2xl px-3 py-4 text-center transition hover:-translate-y-1 hover:bg-white hover:shadow-md"
+      >
+        <span className="h-16 w-16 text-[#1f7ae0]">{iconMap[item.icon]}</span>
+        <span className="text-sm font-semibold text-slate-500">{item.title}</span>
+      </button>
+    ))}
+  </div>
+)
+
+const PortalSectionPage = ({ sectionType }) => {
+  const navigate = useNavigate()
+  const { subject = 'overview' } = useParams()
+  const studentId = localStorage.getItem('student_id') || DEFAULT_STUDENT_ID
+  const [sectionPayload, setSectionPayload] = useState(null)
+  const [loadingSection, setLoadingSection] = useState(true)
+  const [sectionError, setSectionError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    const loadSection = async () => {
+      setLoadingSection(true)
+      setSectionError('')
+      try {
+        const shouldSendSubject = sectionType !== 'fees' && sectionType !== 'performance' && subject !== 'overview'
+        const params = new URLSearchParams()
+        if (shouldSendSubject) {
+          params.set('subject', subject)
+        }
+        if (sectionType === 'performance' && subject !== 'overview') {
+          params.set('semester', subject)
+        }
+        if (studentId) {
+          params.set('student_id', studentId)
+        }
+        const query = params.toString() ? `?${params.toString()}` : ''
+        const response = await fetch(`${API_BASE_URL}/api/portal/section/${sectionType}${query}`, {
+          headers: {
+            'X-Student-Id': studentId,
+          },
+        })
+        if (!response.ok) {
+          if (response.status === 401) {
+            throw new Error('AUTH_REQUIRED')
+          }
+          if (response.status === 403) {
+            throw new Error('ACCESS_DENIED')
+          }
+          throw new Error('Section fetch failed')
+        }
+        const payload = await response.json()
+        if (!active) return
+        setSectionPayload(payload)
+      } catch (err) {
+        if (!active) return
+        if (String(err || '').includes('AUTH_REQUIRED')) {
+          setSectionError('Please sign in again to access this section.')
+        } else if (String(err || '').includes('ACCESS_DENIED')) {
+          setSectionError('Access denied for this section with your student profile.')
+        } else {
+          setSectionError('Could not load live section data.')
+        }
+      } finally {
+        if (active) {
+          setLoadingSection(false)
+        }
+      }
+    }
+    loadSection()
+    return () => {
+      active = false
+    }
+  }, [sectionType, subject])
+
+  const renderContent = () => {
+    if (loadingSection) {
+      return <p className="text-slate-500">Loading...</p>
+    }
+    if (sectionError) {
+      return <p className="text-rose-500">{sectionError}</p>
+    }
+    const liveData = sectionPayload?.data
+    if (!liveData) {
+      return <p className="text-slate-500">No data available for this section.</p>
+    }
+
+    if (sectionType === 'attendance') {
+      const row = liveData
+      if (!row) return <p className="text-slate-500">No attendance data found for this subject.</p>
+      if (!row.attendance_template && !row.attendance_url && typeof row === 'object') {
+        const entries = Object.entries(row)
+        if (entries.length === 0) {
+          return <p className="text-slate-500">No attendance data found.</p>
+        }
+        return (
+          <div className="space-y-3">
+            {entries.map(([subjectName, record]) => {
+              const stats = record?.attendance_stats || null
+              return (
+                <div key={subjectName} className="rounded-xl border border-[#e5edf8] bg-[#f8faff] p-3 text-sm">
+                  <p className="font-semibold text-slate-700">{subjectName}</p>
+                  {stats ? (
+                    <>
+                      <p className="text-slate-600">Attendance: {stats.percentage || '-'}</p>
+                      {stats.attended != null && stats.total != null && (
+                        <p className="text-slate-600">Classes: {stats.attended}/{stats.total}</p>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-slate-500">Attendance stats unavailable.</p>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )
+      }
+      const stats = row.attendance_stats || null
+      return (
+        <div className="space-y-2 text-sm text-slate-700">
+          <p><span className="font-semibold">Subject:</span> {sectionPayload?.subject || subject}</p>
+          <p><span className="font-semibold">Student ID:</span> {studentId}</p>
+          {stats ? (
+            <>
+              <p><span className="font-semibold">Attendance:</span> {stats.percentage || '-'}</p>
+              {stats.attended != null && stats.total != null && (
+                <p><span className="font-semibold">Classes:</span> {stats.attended}/{stats.total}</p>
+              )}
+            </>
+          ) : (
+            <>
+              <p><span className="font-semibold">Attendance:</span> Not available yet for this student.</p>
+              <p className="text-xs text-slate-500">Only route is available right now: {row.attendance_url || row.attendance_template || '-'}</p>
+            </>
+          )}
+        </div>
+      )
+    }
+
+    if (sectionType === 'syllabus') {
+      const row = liveData
+      if (!row) return <p className="text-slate-500">No syllabus data found for this subject.</p>
+      if (!Array.isArray(row.units) && typeof row === 'object') {
+        const entries = Object.entries(row)
+        if (entries.length === 0) {
+          return <p className="text-slate-500">No syllabus data found.</p>
+        }
+        return (
+          <div className="space-y-3">
+            {entries.map(([subjectName, details]) => (
+              <div key={subjectName} className="rounded-xl border border-[#e5edf8] bg-[#f8faff] p-3 text-sm text-slate-700">
+                <p className="font-semibold text-slate-800">{subjectName}</p>
+                <ul className="mt-2 list-disc pl-5">
+                  {(details?.units || []).map((unit) => (
+                    <li key={`${subjectName}-${unit}`}>{unit}</li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        )
+      }
+      return (
+        <div className="space-y-2 text-sm text-slate-700">
+          <p><span className="font-semibold">Subject:</span> {sectionPayload?.subject || subject}</p>
+          <p className="font-semibold">Units:</p>
+          <ul className="list-disc pl-5">
+            {row.units.map((unit) => (
+              <li key={unit}>{unit}</li>
+            ))}
+          </ul>
+        </div>
+      )
+    }
+
+    if (sectionType === 'assignments') {
+      const rows = Array.isArray(liveData?.assignments)
+        ? liveData.assignments
+        : []
+      if (rows.length === 0) return <p className="text-slate-500">No assignments found.</p>
+      return (
+        <div className="space-y-3">
+          {rows.map((row) => (
+            <div key={`${row.assignment_id || row.title}-${row.due_date || row.dueDate}`} className="rounded-xl border border-[#e5edf8] bg-[#f8faff] p-3 text-sm">
+              <p className="font-semibold text-slate-700">{row.title}</p>
+              <p className="text-slate-600">Due: {row.due_date || row.dueDate}</p>
+              <p className="text-slate-600">Status: {row.status}</p>
+            </div>
+          ))}
+        </div>
+      )
+    }
+
+    if (sectionType === 'fees') {
+      const pages = liveData
+      return (
+        <div className="space-y-3">
+          {Object.entries(pages).map(([key, value]) => (
+            <div key={key} className="rounded-xl border border-[#e5edf8] bg-[#f8faff] p-3 text-sm">
+              <p className="font-semibold text-slate-700 capitalize">{key}</p>
+              <p className="text-slate-600 break-all">{String(value)}</p>
+            </div>
+          ))}
+        </div>
+      )
+    }
+
+    if (sectionType === 'performance') {
+      const row = liveData
+      if (!row) return <p className="text-slate-500">No performance data found.</p>
+      if (!row.marks_page_template && !row.marks_page_url && typeof row === 'object') {
+        const entries = Object.entries(row)
+        if (entries.length === 0) {
+          return <p className="text-slate-500">No performance records found.</p>
+        }
+        return (
+          <div className="space-y-3">
+            {entries.map(([sem, details]) => (
+              <div key={sem} className="rounded-xl border border-[#e5edf8] bg-[#f8faff] p-3 text-sm text-slate-700">
+                <p className="font-semibold text-slate-800 capitalize">{sem}</p>
+                <p>Student ID: {studentId}</p>
+                {details?.marks_page_url && <p>Result page available.</p>}
+              </div>
+            ))}
+          </div>
+        )
+      }
+      return (
+        <div className="space-y-2 text-sm text-slate-700">
+          <p><span className="font-semibold">Semester:</span> {sectionPayload?.subject || subject}</p>
+          <p><span className="font-semibold">Student ID:</span> {studentId}</p>
+          <p>Result page is available.</p>
+        </div>
+      )
+    }
+
+    return <p className="text-slate-500">No content available.</p>
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => navigate('/')}
+          className="rounded-full border border-[#e5edf8] bg-white px-4 py-2 text-sm font-semibold text-slate-600"
+        >
+          Back
+        </button>
+        <h2 className="text-lg font-semibold text-slate-800 capitalize">{sectionType} - {subject}</h2>
+      </div>
+      <div className="rounded-2xl border border-[#e5edf8] bg-white p-5 shadow-sm">{renderContent()}</div>
+    </div>
+  )
+}
+
+const StudentShell = ({ children }) => {
+  const auth = getStoredPortalAuth()
   const [chatOpen, setChatOpen] = useState(false)
+
+  if (!auth?.userId) {
+    return <Navigate to="/login" replace />
+  }
 
   useEffect(() => {
     document.body.style.overflow = chatOpen ? 'hidden' : ''
@@ -697,22 +1547,23 @@ const LandingPage = () => {
     }
   }, [chatOpen])
 
+  const handleLogout = () => {
+    clearPortalSession()
+    window.location.href = '/login'
+  }
+
   return (
     <div className="relative min-h-screen">
       <div className={`transition-all duration-200 ${chatOpen ? 'blur-[6px]' : ''}`}>
-        <DashboardLayout showAdminLink>
-          <div className="grid grid-cols-2 gap-x-5 gap-y-7 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-            {moduleItems.map((item) => (
-              <button
-                key={item.title}
-                type="button"
-                className="flex flex-col items-center gap-3 rounded-2xl px-3 py-4 text-center transition hover:-translate-y-1 hover:bg-white hover:shadow-md"
-              >
-                <span className="h-16 w-16 text-[#1f7ae0]">{iconMap[item.icon]}</span>
-                <span className="text-sm font-semibold text-slate-500">{item.title}</span>
-              </button>
-            ))}
-          </div>
+        <DashboardLayout
+          showAdminLink
+          onLogout={handleLogout}
+          currentUser={{
+            displayName: auth.displayName,
+            personaLabel: auth.persona === 'faculty' ? 'Staff' : auth.persona,
+          }}
+        >
+          {children}
         </DashboardLayout>
       </div>
 
@@ -743,19 +1594,34 @@ const LandingPage = () => {
 }
 
 const AdminPage = () => {
-  const [authed, setAuthed] = useState(() => localStorage.getItem('admin_access') === 'true')
+  const [adminToken, setAdminToken] = useState(() => localStorage.getItem('admin_token') || '')
+  const [authed, setAuthed] = useState(() => Boolean(localStorage.getItem('admin_token')))
 
-  const login = (passcode) => {
-    if (passcode === ADMIN_PASSCODE) {
-      localStorage.setItem('admin_access', 'true')
+  const login = async (email, password) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, password }),
+      })
+      if (!response.ok) {
+        return false
+      }
+      const payload = await response.json()
+      localStorage.setItem('admin_token', payload.access_token)
+      setAdminToken(payload.access_token)
       setAuthed(true)
       return true
+    } catch {
+      return false
     }
-    return false
   }
 
   const logout = () => {
-    localStorage.removeItem('admin_access')
+    localStorage.removeItem('admin_token')
+    setAdminToken('')
     setAuthed(false)
   }
 
@@ -765,7 +1631,7 @@ const AdminPage = () => {
 
   return (
     <DashboardLayout onLogout={logout}>
-      <AdminDashboard />
+      <AdminDashboard adminToken={adminToken} onUnauthorized={logout} />
     </DashboardLayout>
   )
 }
@@ -774,7 +1640,88 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<LandingPage />} />
+        <Route path="/login" element={<PortalLoginLanding />} />
+        <Route path="/login/:persona" element={<PersonaLoginPage />} />
+        <Route
+          path="/"
+          element={
+            <StudentShell>
+              <HomePage />
+            </StudentShell>
+          }
+        />
+        <Route
+          path="/attendance/:subject"
+          element={
+            <StudentShell>
+              <PortalSectionPage sectionType="attendance" />
+            </StudentShell>
+          }
+        />
+        <Route
+          path="/attendance"
+          element={
+            <StudentShell>
+              <PortalSectionPage sectionType="attendance" />
+            </StudentShell>
+          }
+        />
+        <Route
+          path="/syllabus/:subject"
+          element={
+            <StudentShell>
+              <PortalSectionPage sectionType="syllabus" />
+            </StudentShell>
+          }
+        />
+        <Route
+          path="/syllabus"
+          element={
+            <StudentShell>
+              <PortalSectionPage sectionType="syllabus" />
+            </StudentShell>
+          }
+        />
+        <Route
+          path="/assignments/:subject"
+          element={
+            <StudentShell>
+              <PortalSectionPage sectionType="assignments" />
+            </StudentShell>
+          }
+        />
+        <Route
+          path="/assignments"
+          element={
+            <StudentShell>
+              <PortalSectionPage sectionType="assignments" />
+            </StudentShell>
+          }
+        />
+        <Route
+          path="/fees/overview"
+          element={
+            <StudentShell>
+              <PortalSectionPage sectionType="fees" />
+            </StudentShell>
+          }
+        />
+        <Route
+          path="/performance/:subject"
+          element={
+            <StudentShell>
+              <PortalSectionPage sectionType="performance" />
+            </StudentShell>
+          }
+        />
+        <Route
+          path="/performance"
+          element={
+            <StudentShell>
+              <PortalSectionPage sectionType="performance" />
+            </StudentShell>
+          }
+        />
         <Route path="/admin" element={<AdminPage />} />
       </Routes>
     </BrowserRouter>
