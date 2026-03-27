@@ -19,6 +19,7 @@ class PortalDataService:
         self._sections: Dict[str, Any] = self._cfg.get("sections", {})
         self._canonical_subjects: Dict[str, Any] = self._cfg.get("canonical_subjects", {})
         self._students: Dict[str, Any] = self._cfg.get("students", {})
+        self._faculty: Dict[str, Any] = self._cfg.get("faculty", {})
         self._client: Client | None = None
         if settings.supabase_url and settings.supabase_key and create_client:
             self._client = create_client(settings.supabase_url, settings.supabase_key)
@@ -44,6 +45,40 @@ class PortalDataService:
         }
 
         canonical_subject = self._resolve_subject(subject)
+
+        if section_key in {"class_schedule", "assignments_review", "attendance_review", "leave_requests"}:
+            faculty = self._faculty.get(student_id or "")
+            if not isinstance(faculty, dict):
+                payload["data"] = {}
+                return payload
+
+            if section_key == "class_schedule":
+                payload["data"] = {
+                    "faculty_name": faculty.get("name"),
+                    "classes": (faculty.get("teaching") or {}).get("today_classes", []),
+                }
+                return payload
+
+            if section_key == "assignments_review":
+                payload["data"] = {
+                    "faculty_name": faculty.get("name"),
+                    **(faculty.get("assignment_review") or {}),
+                }
+                return payload
+
+            if section_key == "attendance_review":
+                payload["data"] = {
+                    "faculty_name": faculty.get("name"),
+                    **(faculty.get("attendance_alerts") or {}),
+                }
+                return payload
+
+            if section_key == "leave_requests":
+                payload["data"] = {
+                    "faculty_name": faculty.get("name"),
+                    **(faculty.get("leave_requests") or {}),
+                }
+                return payload
 
         if section_key == "fees":
             db_pages = self._db_fee_pages(student_id=student_id)
@@ -164,11 +199,16 @@ class PortalDataService:
         if not student_id:
             return False
         student = self._students.get(student_id)
-        if not isinstance(student, dict):
-            return False
+        faculty = self._faculty.get(student_id)
 
         section_key = section_name.lower().strip()
         canonical_subject = self._resolve_subject(subject) if subject else None
+
+        if section_key in {"class_schedule", "assignments_review", "attendance_review", "leave_requests"}:
+            return isinstance(faculty, dict)
+
+        if not isinstance(student, dict):
+            return False
 
         if section_key in {"attendance", "assignments"} and canonical_subject:
             allowed_subjects = self._student_subjects(student)

@@ -172,6 +172,8 @@ async def portal_personas() -> PersonasResponse:
     personas_cfg = cfg.get("personas", {})
     items = []
     for key, details in personas_cfg.items():
+        if key not in {"student", "faculty"}:
+            continue
         items.append(
             PersonaItem(
                 key=key,
@@ -183,7 +185,6 @@ async def portal_personas() -> PersonasResponse:
         items = [
             PersonaItem(key="student", label="Student", description="Track subjects, assignments, fees, and results."),
             PersonaItem(key="faculty", label="Faculty", description="View class workload, student progress, and leave requests."),
-            PersonaItem(key="parent", label="Parent", description="Monitor attendance, fees, and academic updates."),
         ]
     return PersonasResponse(personas=items)
 

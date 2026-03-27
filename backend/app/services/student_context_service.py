@@ -17,6 +17,7 @@ class StudentContextService:
         self._settings = get_settings()
         cfg = get_portal_config()
         self._students = cfg.get("students", {})
+        self._faculty = cfg.get("faculty", {})
         self._email_map = cfg.get("student_email_map", {})
         self._client: Client | None = None
         if self._settings.supabase_url and self._settings.supabase_key and create_client:
@@ -29,11 +30,11 @@ class StudentContextService:
         explicit_student_id: Optional[str],
     ) -> Optional[str]:
         # Priority 1: explicit query/body value
-        if explicit_student_id and self._is_known_student(explicit_student_id):
+        if explicit_student_id and self._is_known_user(explicit_student_id):
             return explicit_student_id
 
         # Priority 2: custom trusted header
-        if header_student_id and self._is_known_student(header_student_id):
+        if header_student_id and self._is_known_user(header_student_id):
             return header_student_id
 
         # Priority 3: auth token mapped to student
@@ -53,11 +54,11 @@ class StudentContextService:
             response = self._client.auth.get_user(token)
             email = (response.user.email if response.user else None) or ""
             mapped_id = self._email_map.get(email.lower().strip())
-            if mapped_id and self._is_known_student(mapped_id):
+            if mapped_id and self._is_known_user(mapped_id):
                 return mapped_id
         except Exception:
             return None
         return None
 
-    def _is_known_student(self, student_id: str) -> bool:
-        return student_id in self._students
+    def _is_known_user(self, user_id: str) -> bool:
+        return user_id in self._students or user_id in self._faculty

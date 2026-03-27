@@ -4,9 +4,11 @@ import time
 import uuid
 
 from app.schemas import ChatRequest, ChatResponse
+from app.services.faculty_chat_service import FacultyChatService
 from app.services.groq_client import GroqClient
 from app.services.persistence import PersistenceService
 from app.services.retrieval import RetrievalService
+from app.services.student_chat_service import StudentChatService
 
 
 class ChatService:
@@ -14,11 +16,15 @@ class ChatService:
         self.groq = GroqClient()
         self.retrieval = RetrievalService()
         self.persistence = PersistenceService()
+        self.faculty_chat = FacultyChatService()
+        self.student_chat = StudentChatService()
 
     async def get_chat_response(self, req: ChatRequest) -> ChatResponse:
         start = time.perf_counter()
-        sources = self.retrieval.find_sources(req.message)
         persona = (req.role or "student").strip().lower()
+        sources = self.retrieval.find_sources(req.message, persona=persona)
+        student_reply = self.student_chat.generate_reply(user_id=req.user_id, message=req.message) if persona == "student" else None
+        faculty_reply = self.faculty_chat.generate_reply(user_id=req.user_id, message=req.message) if persona == "faculty" else None
 
         context = "\n".join([f"- {item.snippet}" for item in sources])
         prompt = (
@@ -28,17 +34,18 @@ class ChatService:
             f"Context:\n{context if context else 'No matching local context found.'}"
         )
 
-        llm_reply = await self.groq.generate_reply(prompt)
+        llm_reply = None if student_reply or faculty_reply else await self.groq.generate_reply(prompt)
 
-        if llm_reply:
+        if student_reply:
+            reply = student_reply
+        elif faculty_reply:
+            reply = faculty_reply
+        elif llm_reply:
             reply = llm_reply
         elif sources:
             reply = f"{sources[0].snippet} If you want, I can help you with next steps as well."
         else:
-            reply = (
-                "I could not find a confident answer yet. Please contact the help desk or provide more details "
-                "like department, semester, and deadline type."
-            )
+            reply = self._fallback_reply(persona)
 
         latency_ms = int((time.perf_counter() - start) * 1000)
 
@@ -57,4 +64,15 @@ class ChatService:
             latency_ms=latency_ms,
             session_id=req.session_id,
             message_id=message_id,
+        )
+
+    def _fallback_reply(self, persona: str) -> str:
+        if persona == "faculty":
+            return (
+                "I could not match that staff request confidently yet. Try asking about classes, pending reviews, "
+                "attendance alerts, leave requests, or assigned subjects."
+            )
+        return (
+            "I could not find a confident answer yet. Please contact the help desk or provide more details "
+            "like subject, semester, or request type."
         )

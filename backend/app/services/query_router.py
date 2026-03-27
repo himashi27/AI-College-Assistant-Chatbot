@@ -34,6 +34,12 @@ class QueryRouterService:
                 clarification="Please enter a valid query.",
             )
 
+        role_key = (req.role or "student").strip().lower()
+        if role_key in {"faculty", "staff", "teacher"} or self._looks_like_faculty_query(normalized):
+            faculty_route = self._route_faculty_query(normalized)
+            if faculty_route:
+                return faculty_route
+
         matched_subjects = self._detect_subjects(normalized)
         if len(matched_subjects) > 1:
             return QueryRouteResponse(
@@ -141,6 +147,63 @@ class QueryRouterService:
             clarification="No direct route found. Use LLM fallback for explanation.",
         )
 
+    def _route_faculty_query(self, normalized: str) -> Optional[QueryRouteResponse]:
+        if any(token in normalized for token in ("class", "classes", "timetable", "schedule", "my classes", "today classes")):
+            return QueryRouteResponse(
+                action="navigate",
+                intent="class_schedule",
+                confidence=0.95,
+                matched_keyword="classes",
+                navigation=NavigationTarget(url="/staff/classes", label="Today's Classes"),
+            )
+        if any(token in normalized for token in ("review", "reviews", "pending assignment", "submission")):
+            return QueryRouteResponse(
+                action="navigate",
+                intent="assignments_review",
+                confidence=0.94,
+                matched_keyword="pending reviews",
+                navigation=NavigationTarget(url="/staff/reviews", label="Pending Reviews"),
+            )
+        if any(token in normalized for token in ("low attendance", "attendance alert", "short attendance")):
+            return QueryRouteResponse(
+                action="navigate",
+                intent="attendance_review",
+                confidence=0.94,
+                matched_keyword="low attendance",
+                navigation=NavigationTarget(url="/staff/attendance-alerts", label="Low Attendance Alerts"),
+            )
+        if any(token in normalized for token in ("leave", "approval", "leave request")):
+            return QueryRouteResponse(
+                action="navigate",
+                intent="leave_requests",
+                confidence=0.94,
+                matched_keyword="leave requests",
+                navigation=NavigationTarget(url="/staff/leave-requests", label="Leave Requests"),
+            )
+        if any(token in normalized for token in ("subject", "teaching load", "assigned subject")):
+            return QueryRouteResponse(
+                action="navigate",
+                intent="class_schedule",
+                confidence=0.85,
+                matched_keyword="assigned subject",
+                navigation=NavigationTarget(url="/staff/classes", label="Teaching Summary"),
+            )
+        return None
+
+    def _looks_like_faculty_query(self, normalized: str) -> bool:
+        faculty_markers = (
+            "my classes",
+            "classes for today",
+            "today s classes",
+            "pending assignment reviews",
+            "pending reviews",
+            "low attendance students",
+            "attendance alerts",
+            "leave requests",
+            "teaching load",
+        )
+        return any(marker in normalized for marker in faculty_markers)
+
     def _subject_navigation_response(
         self,
         subject: SubjectDef,
@@ -210,12 +273,22 @@ class QueryRouterService:
         if best_intent == "unknown":
             if "due assignment" in normalized or ("assignment" in normalized and "due" in normalized):
                 return "assignments", "due assignment", 0.92
+            if any(phrase in normalized for phrase in ("homework", "pending assignment", "pending assignments", "my assignments", "assignment status")):
+                return "assignments", "assignment", 0.9
             if "attendance" in normalized:
                 return "attendance", "attendance", 0.9
+            if any(phrase in normalized for phrase in ("attendance summary", "attendance overview", "present percentage")):
+                return "attendance", "attendance summary", 0.9
             if "syllabus" in normalized:
                 return "syllabus", "syllabus", 0.88
+            if any(phrase in normalized for phrase in ("course outline", "subject topics", "topics of", "units of", "what is in syllabus")):
+                return "syllabus", "course outline", 0.87
             if "fee" in normalized or "fees" in normalized:
                 return "fees", "fees", 0.94
+            if any(phrase in normalized for phrase in ("pending dues", "fee due", "pay fees", "my dues", "payment pending")):
+                return "fees", "pending dues", 0.93
+            if any(phrase in normalized for phrase in ("result", "results", "marksheet", "report card", "gpa", "grades", "score")):
+                return "performance", "result", 0.9
             return "unknown", None, 0.4
 
         confidence = 0.95 if best_keyword and best_keyword in [k.lower() for k in self._intent_config[best_intent].get("route_confidence_keywords", [])] else 0.75
@@ -245,10 +318,12 @@ class QueryRouterService:
             "every subject",
             "all courses",
             "all my subjects",
+            "overall",
+            "summary of all subjects",
         )
         if any(marker in normalized for marker in all_markers):
             return True
-        return "attendance" in normalized and "all" in normalized
+        return ("attendance" in normalized or "syllabus" in normalized or "assignment" in normalized) and "all" in normalized
 
     def _detect_semester(self, normalized: str) -> Optional[str]:
         if "sem3" in normalized or "sem 3" in normalized:

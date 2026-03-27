@@ -47,7 +47,6 @@ const sidebarItems = [
 const suggestionChipsByPersona = {
   student: ['Attendance', 'Syllabus', 'Assignments', 'Fees', 'Performance', 'Results'],
   faculty: ['Today Classes', 'Assignment Reviews', 'Low Attendance', 'Leave Requests', 'Course Plan', 'Student Progress'],
-  parent: ['Ward Attendance', 'Fee Status', 'Performance', 'Exam Updates', 'Academic Notices', 'Contact Mentor'],
 }
 
 const defaultQuickActions = [
@@ -65,12 +64,6 @@ const defaultQuickActionsByPersona = {
     { label: 'Low Attendance Alerts', query: 'show low attendance students', tone: 'Alerts' },
     { label: 'Leave Requests', query: 'show pending leave requests', tone: 'Workflow' },
   ],
-  parent: [
-    { label: 'Ward Attendance', query: 'show my ward attendance summary', tone: 'Monitoring' },
-    { label: 'Fee Overview', query: 'show my ward fee status', tone: 'Finance' },
-    { label: 'Academic Progress', query: 'show my ward academic performance', tone: 'Progress' },
-    { label: 'Important Notices', query: 'show parent notices', tone: 'Updates' },
-  ],
 }
 
 const getWelcomeMessage = (persona) => {
@@ -78,7 +71,6 @@ const getWelcomeMessage = (persona) => {
   const messages = {
     student: 'Welcome to the University AI Assistant. I can help with attendance, assignments, syllabus, fees, and results. What do you need today?',
     faculty: 'Welcome to the Faculty Assistant. I can help with classes, student progress, reviews, and academic workflow. What would you like to check?',
-    parent: 'Welcome to the Parent Assistant. I can help with your ward attendance, fees, performance, and important notices. What would you like to know?',
   }
 
   return {
@@ -1289,7 +1281,9 @@ const HomePage = () => (
 const PortalSectionPage = ({ sectionType }) => {
   const navigate = useNavigate()
   const { subject = 'overview' } = useParams()
-  const studentId = localStorage.getItem('student_id') || DEFAULT_STUDENT_ID
+  const auth = getStoredPortalAuth()
+  const currentUserId = auth?.userId || localStorage.getItem('student_id') || DEFAULT_STUDENT_ID
+  const isFaculty = auth?.persona === 'faculty'
   const [sectionPayload, setSectionPayload] = useState(null)
   const [loadingSection, setLoadingSection] = useState(true)
   const [sectionError, setSectionError] = useState('')
@@ -1308,13 +1302,13 @@ const PortalSectionPage = ({ sectionType }) => {
         if (sectionType === 'performance' && subject !== 'overview') {
           params.set('semester', subject)
         }
-        if (studentId) {
-          params.set('student_id', studentId)
+        if (currentUserId) {
+          params.set('student_id', currentUserId)
         }
         const query = params.toString() ? `?${params.toString()}` : ''
         const response = await fetch(`${API_BASE_URL}/api/portal/section/${sectionType}${query}`, {
           headers: {
-            'X-Student-Id': studentId,
+            'X-Student-Id': currentUserId,
           },
         })
         if (!response.ok) {
@@ -1362,6 +1356,67 @@ const PortalSectionPage = ({ sectionType }) => {
       return <p className="text-slate-500">No data available for this section.</p>
     }
 
+    if (sectionType === 'class_schedule') {
+      const rows = Array.isArray(liveData?.classes) ? liveData.classes : []
+      if (rows.length === 0) return <p className="text-slate-500">No classes scheduled right now.</p>
+      return (
+        <div className="space-y-3">
+          {rows.map((row) => (
+            <div key={`${row.time}-${row.subject}-${row.section}`} className="rounded-xl border border-[#e5edf8] bg-[#f8faff] p-4 text-sm text-slate-700">
+              <p className="font-semibold text-slate-800">{row.subject}</p>
+              <p>{row.time}</p>
+              <p>{row.section}</p>
+              <p>Room: {row.room}</p>
+            </div>
+          ))}
+        </div>
+      )
+    }
+
+    if (sectionType === 'assignments_review') {
+      return (
+        <div className="space-y-3 text-sm text-slate-700">
+          <p><span className="font-semibold">Faculty:</span> {liveData?.faculty_name || auth?.displayName || 'Faculty'}</p>
+          <p><span className="font-semibold">Pending Reviews:</span> {liveData?.pending_count ?? 0}</p>
+          <p><span className="font-semibold">Subjects:</span> {Array.isArray(liveData?.subjects) && liveData.subjects.length > 0 ? liveData.subjects.join(', ') : 'Not available'}</p>
+        </div>
+      )
+    }
+
+    if (sectionType === 'attendance_review') {
+      const rows = Array.isArray(liveData?.students) ? liveData.students : []
+      if (rows.length === 0) return <p className="text-slate-500">No low attendance alerts right now.</p>
+      return (
+        <div className="space-y-3">
+          {rows.map((row) => (
+            <div key={`${row.student_id}-${row.subject}`} className="rounded-xl border border-[#e5edf8] bg-[#f8faff] p-4 text-sm text-slate-700">
+              <p className="font-semibold text-slate-800">{row.name}</p>
+              <p>ID: {row.student_id}</p>
+              <p>Subject: {row.subject}</p>
+              <p>Attendance: {row.percentage}</p>
+            </div>
+          ))}
+        </div>
+      )
+    }
+
+    if (sectionType === 'leave_requests') {
+      const rows = Array.isArray(liveData?.pending) ? liveData.pending : []
+      if (rows.length === 0) return <p className="text-slate-500">No pending leave requests right now.</p>
+      return (
+        <div className="space-y-3">
+          {rows.map((row) => (
+            <div key={`${row.student_id}-${row.reason}`} className="rounded-xl border border-[#e5edf8] bg-[#f8faff] p-4 text-sm text-slate-700">
+              <p className="font-semibold text-slate-800">{row.student_name}</p>
+              <p>ID: {row.student_id}</p>
+              <p>Days: {row.days}</p>
+              <p>Reason: {row.reason}</p>
+            </div>
+          ))}
+        </div>
+      )
+    }
+
     if (sectionType === 'attendance') {
       const row = liveData
       if (!row) return <p className="text-slate-500">No attendance data found for this subject.</p>
@@ -1397,7 +1452,7 @@ const PortalSectionPage = ({ sectionType }) => {
       return (
         <div className="space-y-2 text-sm text-slate-700">
           <p><span className="font-semibold">Subject:</span> {sectionPayload?.subject || subject}</p>
-          <p><span className="font-semibold">Student ID:</span> {studentId}</p>
+          <p><span className="font-semibold">{isFaculty ? 'User ID' : 'Student ID'}:</span> {currentUserId}</p>
           {stats ? (
             <>
               <p><span className="font-semibold">Attendance:</span> {stats.percentage || '-'}</p>
@@ -1496,7 +1551,7 @@ const PortalSectionPage = ({ sectionType }) => {
             {entries.map(([sem, details]) => (
               <div key={sem} className="rounded-xl border border-[#e5edf8] bg-[#f8faff] p-3 text-sm text-slate-700">
                 <p className="font-semibold text-slate-800 capitalize">{sem}</p>
-                <p>Student ID: {studentId}</p>
+                <p>{isFaculty ? 'User ID' : 'Student ID'}: {currentUserId}</p>
                 {details?.marks_page_url && <p>Result page available.</p>}
               </div>
             ))}
@@ -1506,7 +1561,7 @@ const PortalSectionPage = ({ sectionType }) => {
       return (
         <div className="space-y-2 text-sm text-slate-700">
           <p><span className="font-semibold">Semester:</span> {sectionPayload?.subject || subject}</p>
-          <p><span className="font-semibold">Student ID:</span> {studentId}</p>
+          <p><span className="font-semibold">{isFaculty ? 'User ID' : 'Student ID'}:</span> {currentUserId}</p>
           <p>Result page is available.</p>
         </div>
       )
@@ -1719,6 +1774,38 @@ function App() {
           element={
             <StudentShell>
               <PortalSectionPage sectionType="performance" />
+            </StudentShell>
+          }
+        />
+        <Route
+          path="/staff/classes"
+          element={
+            <StudentShell>
+              <PortalSectionPage sectionType="class_schedule" />
+            </StudentShell>
+          }
+        />
+        <Route
+          path="/staff/reviews"
+          element={
+            <StudentShell>
+              <PortalSectionPage sectionType="assignments_review" />
+            </StudentShell>
+          }
+        />
+        <Route
+          path="/staff/attendance-alerts"
+          element={
+            <StudentShell>
+              <PortalSectionPage sectionType="attendance_review" />
+            </StudentShell>
+          }
+        />
+        <Route
+          path="/staff/leave-requests"
+          element={
+            <StudentShell>
+              <PortalSectionPage sectionType="leave_requests" />
             </StudentShell>
           }
         />

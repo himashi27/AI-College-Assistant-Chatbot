@@ -201,6 +201,22 @@
           "marks_page_template": "/performance/{student_id}/sem5"
         }
       }
+    },
+    "class_schedule": {
+      "requires_auth": true,
+      "last_updated_at": "2026-03-18T10:00:00+05:30"
+    },
+    "assignments_review": {
+      "requires_auth": true,
+      "last_updated_at": "2026-03-18T10:00:00+05:30"
+    },
+    "attendance_review": {
+      "requires_auth": true,
+      "last_updated_at": "2026-03-18T10:00:00+05:30"
+    },
+    "leave_requests": {
+      "requires_auth": true,
+      "last_updated_at": "2026-03-18T10:00:00+05:30"
     }
   },
   "student_id_aliases": [
@@ -243,7 +259,29 @@
     "FAC1001": {
       "name": "Dr. Sharmaji",
       "department": "School of Engineering & Technology",
-      "subjects": ["DBMS", "GEN_AI"]
+      "subjects": ["DBMS", "GEN_AI"],
+      "teaching": {
+        "today_classes": [
+          { "time": "09:00 AM - 10:00 AM", "subject": "DBMS", "section": "B.Tech CSE 3A", "room": "A-302" },
+          { "time": "11:00 AM - 12:00 PM", "subject": "GEN_AI", "section": "B.Tech AI 5B", "room": "AI-204" }
+        ]
+      },
+      "assignment_review": {
+        "pending_count": 7,
+        "subjects": ["DBMS", "GEN_AI"]
+      },
+      "attendance_alerts": {
+        "students": [
+          { "student_id": "AI23002", "name": "Aditi Singh", "subject": "DBMS", "percentage": "68%" },
+          { "student_id": "AI23009", "name": "Ankit Yadav", "subject": "GEN_AI", "percentage": "72%" }
+        ]
+      },
+      "leave_requests": {
+        "pending": [
+          { "student_id": "AI23003", "student_name": "Rohit Kumar", "days": 2, "reason": "Medical leave" },
+          { "student_id": "AI23008", "student_name": "Pooja Mishra", "days": 1, "reason": "Family function" }
+        ]
+      }
     }
   },
   "fallback_templates": {

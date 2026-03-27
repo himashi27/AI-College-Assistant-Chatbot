@@ -20,7 +20,7 @@ def test_health_returns_ok() -> None:
 def test_portal_login_student_success() -> None:
     response = client.post(
         "/api/auth/login",
-        json={"email": "rahul.verma@krmangalam.edu.in", "persona": "student"},
+        json={"email": "rahul@krmangalam.edu.in", "persona": "student"},
     )
 
     assert response.status_code == 200
@@ -32,7 +32,7 @@ def test_portal_login_student_success() -> None:
 def test_portal_login_staff_success() -> None:
     response = client.post(
         "/api/auth/login",
-        json={"email": "dr.sharma@krmangalam.edu.in", "persona": "staff"},
+        json={"email": "dr.sharmaji@krmangalam.edu.in", "persona": "staff"},
     )
 
     assert response.status_code == 200
@@ -93,6 +93,256 @@ def test_chat_prompt_includes_persona(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert "assisting a faculty" in captured_prompt["value"].lower()
+
+
+def test_chat_faculty_class_query_uses_deterministic_data(monkeypatch) -> None:
+    from app.api.routes import chat_service
+
+    async def fake_generate_reply(_prompt: str):
+        return None
+
+    monkeypatch.setattr(chat_service.groq, "generate_reply", fake_generate_reply)
+
+    response = client.post(
+        "/api/chat",
+        json={
+            "session_id": "session-faculty-classes",
+            "user_id": "FAC1001",
+            "message": "show my classes for today",
+            "role": "faculty",
+            "language": "en",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "your classes for today" in payload["reply"].lower()
+    assert "DBMS" in payload["reply"]
+
+
+def test_chat_faculty_leave_query_uses_deterministic_data(monkeypatch) -> None:
+    from app.api.routes import chat_service
+
+    async def fake_generate_reply(_prompt: str):
+        return None
+
+    monkeypatch.setattr(chat_service.groq, "generate_reply", fake_generate_reply)
+
+    response = client.post(
+        "/api/chat",
+        json={
+            "session_id": "session-faculty-leave",
+            "user_id": "FAC1001",
+            "message": "show pending leave requests",
+            "role": "faculty",
+            "language": "en",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "pending leave requests" in payload["reply"].lower()
+    assert "Rohit Kumar" in payload["reply"]
+
+
+def test_chat_faculty_fallback_is_persona_specific(monkeypatch) -> None:
+    from app.api.routes import chat_service
+
+    async def fake_generate_reply(_prompt: str):
+        return None
+
+    monkeypatch.setattr(chat_service.groq, "generate_reply", fake_generate_reply)
+
+    response = client.post(
+        "/api/chat",
+        json={
+            "session_id": "session-faculty-fallback",
+            "user_id": "FAC1001",
+            "message": "help me with something random",
+            "role": "faculty",
+            "language": "en",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "staff request" in payload["reply"].lower()
+
+
+def test_chat_faculty_first_class_follow_up(monkeypatch) -> None:
+    from app.api.routes import chat_service
+
+    async def fake_generate_reply(_prompt: str):
+        return None
+
+    monkeypatch.setattr(chat_service.groq, "generate_reply", fake_generate_reply)
+
+    response = client.post(
+        "/api/chat",
+        json={
+            "session_id": "session-faculty-first-class",
+            "user_id": "FAC1001",
+            "message": "which class is first today",
+            "role": "faculty",
+            "language": "en",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "first class" in payload["reply"].lower()
+    assert "DBMS" in payload["reply"]
+
+
+def test_chat_faculty_review_count_follow_up(monkeypatch) -> None:
+    from app.api.routes import chat_service
+
+    async def fake_generate_reply(_prompt: str):
+        return None
+
+    monkeypatch.setattr(chat_service.groq, "generate_reply", fake_generate_reply)
+
+    response = client.post(
+        "/api/chat",
+        json={
+            "session_id": "session-faculty-review-count",
+            "user_id": "FAC1001",
+            "message": "how many reviews are pending",
+            "role": "faculty",
+            "language": "en",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "7 pending assignment reviews" in payload["reply"]
+
+
+def test_chat_faculty_low_attendance_names_follow_up(monkeypatch) -> None:
+    from app.api.routes import chat_service
+
+    async def fake_generate_reply(_prompt: str):
+        return None
+
+    monkeypatch.setattr(chat_service.groq, "generate_reply", fake_generate_reply)
+
+    response = client.post(
+        "/api/chat",
+        json={
+            "session_id": "session-faculty-low-attendance",
+            "user_id": "FAC1001",
+            "message": "who has low attendance",
+            "role": "faculty",
+            "language": "en",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "Aditi Singh" in payload["reply"]
+    assert "Ankit Yadav" in payload["reply"]
+
+
+def test_chat_student_lowest_attendance_follow_up(monkeypatch) -> None:
+    from app.api.routes import chat_service
+
+    async def fake_generate_reply(_prompt: str):
+        return None
+
+    monkeypatch.setattr(chat_service.groq, "generate_reply", fake_generate_reply)
+
+    response = client.post(
+        "/api/chat",
+        json={
+            "session_id": "session-student-lowest-attendance",
+            "user_id": "AI23001",
+            "message": "which subject has lowest attendance",
+            "role": "student",
+            "language": "en",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "lowest attendance" in payload["reply"].lower()
+    assert "DBMS" in payload["reply"]
+    assert "43/50" in payload["reply"]
+
+
+def test_chat_student_highest_attendance_follow_up(monkeypatch) -> None:
+    from app.api.routes import chat_service
+
+    async def fake_generate_reply(_prompt: str):
+        return None
+
+    monkeypatch.setattr(chat_service.groq, "generate_reply", fake_generate_reply)
+
+    response = client.post(
+        "/api/chat",
+        json={
+            "session_id": "session-student-highest-attendance",
+            "user_id": "AI23001",
+            "message": "which subject has highest attendance",
+            "role": "student",
+            "language": "en",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "highest attendance" in payload["reply"].lower()
+    assert "GEN_AI" in payload["reply"]
+    assert "45/50" in payload["reply"]
+
+
+def test_chat_student_assignment_count_follow_up(monkeypatch) -> None:
+    from app.api.routes import chat_service
+
+    async def fake_generate_reply(_prompt: str):
+        return None
+
+    monkeypatch.setattr(chat_service.groq, "generate_reply", fake_generate_reply)
+
+    response = client.post(
+        "/api/chat",
+        json={
+            "session_id": "session-student-assignment-count",
+            "user_id": "AI23001",
+            "message": "how many assignments are pending",
+            "role": "student",
+            "language": "en",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "4 pending assignments" in payload["reply"]
+
+
+def test_chat_student_next_assignment_follow_up(monkeypatch) -> None:
+    from app.api.routes import chat_service
+
+    async def fake_generate_reply(_prompt: str):
+        return None
+
+    monkeypatch.setattr(chat_service.groq, "generate_reply", fake_generate_reply)
+
+    response = client.post(
+        "/api/chat",
+        json={
+            "session_id": "session-student-next-assignment",
+            "user_id": "AI23001",
+            "message": "which assignment is due first",
+            "role": "student",
+            "language": "en",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "next assignment due" in payload["reply"].lower()
+    assert "Normalization Case Study" in payload["reply"]
+    assert "2026-03-15" in payload["reply"]
 
 
 def test_chat_validation_error_on_empty_message() -> None:
@@ -202,6 +452,18 @@ def test_query_route_syllabus_all_subjects() -> None:
     assert payload["navigation"]["url"] == "/syllabus"
 
 
+def test_query_route_syllabus_natural_topics_phrase() -> None:
+    response = client.post(
+        "/api/query/route",
+        json={"message": "what are the topics of dbms"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["action"] == "navigate"
+    assert payload["intent"] == "syllabus"
+    assert payload["navigation"]["url"] == "/syllabus/dbms"
+
+
 def test_query_route_performance_semester() -> None:
     response = client.post(
         "/api/query/route",
@@ -212,6 +474,30 @@ def test_query_route_performance_semester() -> None:
     assert payload["action"] == "navigate"
     assert payload["intent"] == "performance"
     assert payload["navigation"]["url"] == "/performance/sem3"
+
+
+def test_query_route_faculty_classes_navigation() -> None:
+    response = client.post(
+        "/api/query/route",
+        json={"message": "show my classes for today", "role": "faculty", "user_id": "FAC1001"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["action"] == "navigate"
+    assert payload["intent"] == "class_schedule"
+    assert payload["navigation"]["url"] == "/staff/classes"
+
+
+def test_query_route_faculty_phrase_without_role_still_routes_to_staff() -> None:
+    response = client.post(
+        "/api/query/route",
+        json={"message": "show my classes for today"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["action"] == "navigate"
+    assert payload["intent"] == "class_schedule"
+    assert payload["navigation"]["url"] == "/staff/classes"
 
 
 def test_query_route_due_assignment_returns_structured_action() -> None:
@@ -226,6 +512,42 @@ def test_query_route_due_assignment_returns_structured_action() -> None:
     assert payload["intent"] == "assignment_due"
     assert payload["data"]["subject"] == "DBMS"
     assert payload["navigation"]["url"] == "/assignments/dbms"
+
+
+def test_query_route_assignments_natural_phrase() -> None:
+    response = client.post(
+        "/api/query/route",
+        json={"message": "show my homework for dbms"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["action"] == "assignment_summary"
+    assert payload["intent"] == "assignment_due"
+    assert payload["navigation"]["url"] == "/assignments/dbms"
+
+
+def test_query_route_fees_natural_dues_phrase() -> None:
+    response = client.post(
+        "/api/query/route",
+        json={"message": "what are my pending dues"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["action"] == "navigate"
+    assert payload["intent"] == "fees"
+    assert payload["navigation"]["url"] == "/fees/overview"
+
+
+def test_query_route_performance_report_card_phrase() -> None:
+    response = client.post(
+        "/api/query/route",
+        json={"message": "show my report card"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["action"] == "navigate"
+    assert payload["intent"] == "performance"
+    assert payload["navigation"]["url"] == "/performance"
 
 
 def test_parse_due_assignments_endpoint() -> None:
@@ -296,7 +618,8 @@ def test_portal_personas_endpoint() -> None:
     assert response.status_code == 200
     payload = response.json()
     keys = {item["key"] for item in payload["personas"]}
-    assert {"student", "faculty", "parent"}.issubset(keys)
+    assert {"student", "faculty"}.issubset(keys)
+    assert "parent" not in keys
 
 
 def test_portal_quick_actions_for_faculty() -> None:
@@ -314,6 +637,15 @@ def test_portal_section_endpoint_for_assignments_without_subject() -> None:
     assert payload["section"] == "assignments"
     assert isinstance(payload["data"], dict)
     assert isinstance(payload["data"].get("assignments"), list)
+
+
+def test_portal_section_endpoint_for_faculty_classes() -> None:
+    response = client.get("/api/portal/section/class_schedule?student_id=FAC1001")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["section"] == "class_schedule"
+    assert isinstance(payload["data"], dict)
+    assert isinstance(payload["data"].get("classes"), list)
 
 
 def test_portal_section_endpoint_for_performance_sem3() -> None:
