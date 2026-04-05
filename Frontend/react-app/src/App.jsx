@@ -829,7 +829,7 @@ const ChatbotPanel = () => {
     }
     upsertChatThread(activeThread)
     setHistoryThreads(getStoredChatThreads().filter((item) => item?.ownerKey === ownerKey))
-  }, [chatHydrated, messages])
+  }, [chatHydrated, messages, selectedPersona])
 
   useEffect(() => {
     let active = true
@@ -1677,7 +1677,7 @@ const PortalSectionPage = ({ sectionType }) => {
     return () => {
       active = false
     }
-  }, [sectionType, subject])
+  }, [sectionType, subject, currentUserId])
 
   const renderContent = () => {
     if (loadingSection) {
@@ -1926,16 +1926,16 @@ const StudentShell = ({ children }) => {
   const auth = getStoredPortalAuth()
   const [chatOpen, setChatOpen] = useState(false)
 
-  if (!auth?.userId) {
-    return <Navigate to="/login" replace />
-  }
-
   useEffect(() => {
     document.body.style.overflow = chatOpen ? 'hidden' : ''
     return () => {
       document.body.style.overflow = ''
     }
   }, [chatOpen])
+
+  if (!auth?.userId) {
+    return <Navigate to="/login" replace />
+  }
 
   const handleLogout = () => {
     clearPortalSession()
