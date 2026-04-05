@@ -9,6 +9,10 @@ on:
 jobs:
   backend-tests:
     runs-on: ubuntu-latest
+    env:
+      ADMIN_API_KEY: dev-admin-key
+      ADMIN_EMAILS: hihimanshi2957@gmail.com
+      PYTHONPATH: .
     defaults:
       run:
         working-directory: backend
