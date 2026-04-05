@@ -98,7 +98,100 @@ const clearPortalSession = () => {
     'chat_owner_key',
     'chat_messages',
     'chat_session_id',
+    'chat_route_context',
   ].forEach((key) => localStorage.removeItem(key))
+}
+
+const getStoredRouteContext = () => {
+  try {
+    const raw = localStorage.getItem('chat_route_context')
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+const CHAT_THREADS_KEY = 'chat_threads'
+
+const getLocalDateKey = () => {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const getStoredChatThreads = () => {
+  try {
+    const raw = localStorage.getItem(CHAT_THREADS_KEY)
+    const parsed = raw ? JSON.parse(raw) : []
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+const saveStoredChatThreads = (threads) => {
+  localStorage.setItem(CHAT_THREADS_KEY, JSON.stringify(threads))
+}
+
+const upsertChatThread = (thread) => {
+  const threads = getStoredChatThreads().filter((item) => item?.threadKey !== thread.threadKey)
+  threads.push(thread)
+  threads.sort((a, b) => String(b.lastUpdatedAt || '').localeCompare(String(a.lastUpdatedAt || '')))
+  saveStoredChatThreads(threads.slice(0, 20))
+}
+
+const getThreadKey = (ownerKey, dateKey) => `${ownerKey}:${dateKey}`
+
+const buildThreadPreview = (messages) => {
+  const meaningful = (messages || []).filter((item) => item?.role === 'user' || item?.role === 'bot')
+  const last = meaningful[meaningful.length - 1]
+  return last?.text || 'Conversation started'
+}
+
+const normalizeText = (value) =>
+  String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+const inferFollowUpQuery = (rawMessage, routeContext) => {
+  if (!routeContext?.intent) return null
+
+  const normalized = normalizeText(rawMessage)
+  if (!normalized) return null
+
+  const explicitIntentMarkers = ['attendance', 'syllabus', 'assignment', 'assignments', 'fees', 'results', 'result', 'performance']
+  if (explicitIntentMarkers.some((token) => normalized.includes(token))) {
+    return null
+  }
+
+  const subjectFollowUp = normalized.match(/^(?:what about|how about|and|for)\s+(.+)$/)
+  if (subjectFollowUp?.[1]) {
+    const subjectText = subjectFollowUp[1].trim()
+    if (routeContext.intent === 'attendance') return `attendance of ${subjectText}`
+    if (routeContext.intent === 'syllabus') return `syllabus of ${subjectText}`
+    if (routeContext.intent === 'assignment_due' || routeContext.intent === 'assignments') return `due assignment for ${subjectText}`
+  }
+
+  if (routeContext.intent === 'attendance') {
+    if (['which one is lower', 'which one is lowest', 'lowest one', 'which subject is lower'].includes(normalized)) {
+      return 'which subject has lowest attendance'
+    }
+    if (['which one is higher', 'which one is highest', 'highest one', 'which subject is higher'].includes(normalized)) {
+      return 'which subject has highest attendance'
+    }
+  }
+
+  if (routeContext.intent === 'assignment_due' || routeContext.intent === 'assignments') {
+    if (['which one is due first', 'which is due first', 'which one comes first', 'which assignment comes first'].includes(normalized)) {
+      return 'which assignment is due first'
+    }
+  }
+
+  return null
 }
 
 const iconMap = {
@@ -607,10 +700,18 @@ const ChatbotPanel = () => {
   const [feedbackStatus, setFeedbackStatus] = useState({})
   const [quickActions, setQuickActions] = useState(defaultQuickActionsByPersona[initialPersona] || defaultQuickActions)
   const [chatHydrated, setChatHydrated] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyThreads, setHistoryThreads] = useState([])
+  const [viewedThreadKey, setViewedThreadKey] = useState(null)
   const endRef = useRef(null)
+  const messageScrollRef = useRef(null)
+  const historyScrollRef = useRef(null)
   const studentIdRef = useRef(initialUserId)
   const sessionIdRef = useRef(localStorage.getItem('chat_session_id') || `web-${Date.now()}`)
+  const routeContextRef = useRef(getStoredRouteContext())
   const activeSuggestionChips = suggestionChipsByPersona[selectedPersona] || suggestionChipsByPersona.student
+  const ownerKeyRef = useRef(`${initialPersona}:${initialUserId}`)
+  const currentDateKeyRef = useRef(getLocalDateKey())
 
   useEffect(() => {
     localStorage.setItem('chat_session_id', sessionIdRef.current)
@@ -623,6 +724,13 @@ const ChatbotPanel = () => {
     const activePersona = localStorage.getItem('active_persona') || selectedPersona || DEFAULT_PERSONA
     const chatOwnerKey = localStorage.getItem('chat_owner_key')
     const currentOwnerKey = `${activePersona}:${activeStudentId}`
+    const todayKey = getLocalDateKey()
+    const todayThreadKey = getThreadKey(currentOwnerKey, todayKey)
+    const storedThreads = getStoredChatThreads()
+    const todayThread = storedThreads.find((item) => item?.threadKey === todayThreadKey)
+    ownerKeyRef.current = currentOwnerKey
+    currentDateKeyRef.current = todayKey
+    setViewedThreadKey(todayThreadKey)
 
     // Reset once when user identity or persona changes, then preserve history for that combination.
     if (chatOwnerKey !== currentOwnerKey) {
@@ -632,32 +740,87 @@ const ChatbotPanel = () => {
       localStorage.setItem('chat_session_id', sessionIdRef.current)
       localStorage.setItem('student_id', activeStudentId)
       localStorage.setItem('active_persona', activePersona)
-      localStorage.setItem('chat_messages', JSON.stringify([getWelcomeMessage(activePersona)]))
-      setMessages([getWelcomeMessage(activePersona)])
+      localStorage.removeItem('chat_route_context')
+      routeContextRef.current = null
+      const welcome = [getWelcomeMessage(activePersona)]
+      localStorage.setItem('chat_messages', JSON.stringify(welcome))
+      upsertChatThread({
+        threadKey: todayThreadKey,
+        ownerKey: currentOwnerKey,
+        dateKey: todayKey,
+        sessionId: sessionIdRef.current,
+        persona: activePersona,
+        userId: activeStudentId,
+        title: 'Today',
+        preview: buildThreadPreview(welcome),
+        messages: welcome,
+        routeContext: null,
+        lastUpdatedAt: new Date().toISOString(),
+      })
+      setHistoryThreads(getStoredChatThreads().filter((item) => item?.ownerKey === currentOwnerKey))
+      setMessages(welcome)
       setChatHydrated(true)
       return
     }
 
-    const saved = localStorage.getItem('chat_messages')
-    if (!saved) {
+    if (todayThread?.sessionId) {
+      sessionIdRef.current = todayThread.sessionId
+      localStorage.setItem('chat_session_id', sessionIdRef.current)
+    }
+    if (todayThread?.routeContext) {
+      routeContextRef.current = todayThread.routeContext
+      localStorage.setItem('chat_route_context', JSON.stringify(todayThread.routeContext))
+    } else {
+      routeContextRef.current = getStoredRouteContext()
+    }
+
+    if (!todayThread?.messages?.length) {
+      const welcome = [getWelcomeMessage(activePersona)]
+      localStorage.setItem('chat_messages', JSON.stringify(welcome))
+      upsertChatThread({
+        threadKey: todayThreadKey,
+        ownerKey: currentOwnerKey,
+        dateKey: todayKey,
+        sessionId: sessionIdRef.current,
+        persona: activePersona,
+        userId: activeStudentId,
+        title: 'Today',
+        preview: buildThreadPreview(welcome),
+        messages: welcome,
+        routeContext: routeContextRef.current,
+        lastUpdatedAt: new Date().toISOString(),
+      })
+      setMessages(welcome)
+      setHistoryThreads(getStoredChatThreads().filter((item) => item?.ownerKey === currentOwnerKey))
       setChatHydrated(true)
       return
     }
-    try {
-      const parsed = JSON.parse(saved)
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        setMessages(parsed)
-      }
-    } catch {
-      // ignore broken cached payload
-    } finally {
-      setChatHydrated(true)
-    }
+    setMessages(todayThread.messages)
+    setHistoryThreads(storedThreads.filter((item) => item?.ownerKey === currentOwnerKey))
+    setChatHydrated(true)
   }, [selectedPersona])
 
   useEffect(() => {
     if (!chatHydrated) return
     localStorage.setItem('chat_messages', JSON.stringify(messages))
+    const ownerKey = ownerKeyRef.current
+    const dateKey = currentDateKeyRef.current
+    const threadKey = getThreadKey(ownerKey, dateKey)
+    const activeThread = {
+      threadKey,
+      ownerKey,
+      dateKey,
+      sessionId: sessionIdRef.current,
+      persona: selectedPersona,
+      userId: studentIdRef.current,
+      title: dateKey === getLocalDateKey() ? 'Today' : dateKey,
+      preview: buildThreadPreview(messages),
+      messages,
+      routeContext: routeContextRef.current,
+      lastUpdatedAt: new Date().toISOString(),
+    }
+    upsertChatThread(activeThread)
+    setHistoryThreads(getStoredChatThreads().filter((item) => item?.ownerKey === ownerKey))
   }, [chatHydrated, messages])
 
   useEffect(() => {
@@ -766,6 +929,22 @@ const ChatbotPanel = () => {
   const sendMessage = async (text) => {
     const cleaned = text.trim()
     if (!cleaned || isSending) return
+    if (viewedThreadKey && viewedThreadKey !== getThreadKey(ownerKeyRef.current, currentDateKeyRef.current)) {
+      const currentThreads = getStoredChatThreads()
+      const todayThread = currentThreads.find((item) => item?.threadKey === getThreadKey(ownerKeyRef.current, currentDateKeyRef.current))
+      setViewedThreadKey(getThreadKey(ownerKeyRef.current, currentDateKeyRef.current))
+      setMessages(todayThread?.messages?.length ? todayThread.messages : [getWelcomeMessage(selectedPersona)])
+    }
+    const rewrittenQuery = inferFollowUpQuery(cleaned, routeContextRef.current)
+    const effectiveQuery = rewrittenQuery || cleaned
+    const effectivePage =
+      location.pathname === '/' && routeContextRef.current?.page
+        ? routeContextRef.current.page
+        : location.pathname
+    const history = messages
+      .filter((item) => item?.role === 'user' || item?.role === 'bot')
+      .slice(-6)
+      .map((item) => ({ role: item.role, text: item.text }))
 
     const userMessage = {
       id: Date.now(),
@@ -785,11 +964,11 @@ const ChatbotPanel = () => {
           'X-Student-Id': studentIdRef.current,
         },
         body: JSON.stringify({
-          message: cleaned,
+          message: effectiveQuery,
           session_id: sessionIdRef.current,
           user_id: studentIdRef.current,
           role: selectedPersona,
-          current_page: location.pathname,
+          current_page: effectivePage,
         }),
       })
 
@@ -801,6 +980,12 @@ const ChatbotPanel = () => {
 
       if (routePayload.action === 'navigate' && routePayload.navigation?.url) {
         const targetLabel = routePayload.navigation.label || 'requested section'
+        routeContextRef.current = {
+          intent: routePayload.intent,
+          subject: routePayload?.data?.subject || null,
+          page: routePayload.navigation.url,
+        }
+        localStorage.setItem('chat_route_context', JSON.stringify(routeContextRef.current))
         setMessages((prev) => [
           ...prev,
           {
@@ -829,8 +1014,8 @@ const ChatbotPanel = () => {
             'X-Student-Id': studentIdRef.current,
           },
           body: JSON.stringify({
-            message: cleaned,
-            current_page: location.pathname,
+            message: effectiveQuery,
+            current_page: effectivePage,
           }),
         })
 
@@ -839,6 +1024,12 @@ const ChatbotPanel = () => {
         }
 
         const assignmentPayload = await assignmentRes.json()
+        routeContextRef.current = {
+          intent: routePayload.intent,
+          subject: assignmentPayload?.subject || routePayload?.data?.subject || null,
+          page: routePayload.navigation?.url || effectivePage,
+        }
+        localStorage.setItem('chat_route_context', JSON.stringify(routeContextRef.current))
         setMessages((prev) => [
           ...prev,
           {
@@ -876,9 +1067,10 @@ const ChatbotPanel = () => {
         body: JSON.stringify({
           session_id: sessionIdRef.current,
           user_id: studentIdRef.current,
-          message: cleaned,
+          message: effectiveQuery,
           role: selectedPersona,
           language: 'en',
+          history,
         }),
       })
 
@@ -915,9 +1107,48 @@ const ChatbotPanel = () => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  const showThread = (thread) => {
+    setViewedThreadKey(thread.threadKey)
+    setMessages(Array.isArray(thread.messages) && thread.messages.length > 0 ? thread.messages : [getWelcomeMessage(selectedPersona)])
+    routeContextRef.current = thread.routeContext || null
+    localStorage.setItem('chat_route_context', JSON.stringify(routeContextRef.current))
+    setHistoryOpen(false)
+  }
+
+  const goToTodayThread = () => {
+    const todayKey = getThreadKey(ownerKeyRef.current, currentDateKeyRef.current)
+    const thread = getStoredChatThreads().find((item) => item?.threadKey === todayKey)
+    setViewedThreadKey(todayKey)
+    setMessages(thread?.messages?.length ? thread.messages : [getWelcomeMessage(selectedPersona)])
+    routeContextRef.current = thread?.routeContext || null
+    if (routeContextRef.current) {
+      localStorage.setItem('chat_route_context', JSON.stringify(routeContextRef.current))
+    } else {
+      localStorage.removeItem('chat_route_context')
+    }
+    setHistoryOpen(false)
+  }
+
+  const isViewingHistory = viewedThreadKey && viewedThreadKey !== getThreadKey(ownerKeyRef.current, currentDateKeyRef.current)
+  const handleForcedScroll = (event) => {
+    const target = event.currentTarget
+    if (!target) return
+    target.scrollTop += event.deltaY
+  }
+
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-[26px] bg-[#f6f0e5] shadow-2xl">
+    <div className="grid h-full min-h-0 grid-rows-[auto,minmax(0,1fr),auto] overflow-hidden rounded-[26px] bg-[#f6f0e5] shadow-2xl">
       <div className="flex items-center gap-3 bg-royal px-5 py-4 text-white">
+        <button
+          type="button"
+          onClick={() => setHistoryOpen((prev) => !prev)}
+          className="grid h-10 w-10 place-items-center rounded-xl border border-white/20 bg-white/10 text-white"
+          aria-label="Toggle chat history"
+        >
+          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 4h18M3 12h18M3 20h18" />
+          </svg>
+        </button>
         <div className="h-11 w-11 rounded-xl bg-white p-1">
           <img src="/logo.png" alt="K.R. Mangalam University" className="h-full w-full rounded-lg object-contain" />
         </div>
@@ -933,80 +1164,137 @@ const ChatbotPanel = () => {
         </span>
       </div>
 
-      <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
-        <div className="space-y-2">
-          <div className="flex flex-wrap gap-2">
-          {activeSuggestionChips.map((chip) => (
+      <div className="relative min-h-0 overflow-hidden">
+        {historyOpen && (
+          <div className="absolute inset-y-0 left-0 z-10 flex w-[78%] max-w-[260px] min-h-0 flex-col border-r border-[#e5dccb] bg-[#fffaf1] p-4 shadow-xl">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-semibold text-slate-800">History</h4>
+              <button type="button" onClick={() => setHistoryOpen(false)} className="text-sm font-semibold text-slate-500">Close</button>
+            </div>
             <button
-              key={chip}
               type="button"
-              onClick={() => sendMessage(chip)}
-              className="rounded-full border border-[#d7d7d7] bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-royal hover:text-royal"
+              onClick={goToTodayThread}
+              className={`mt-4 w-full rounded-2xl border px-3 py-3 text-left text-sm ${!isViewingHistory ? 'border-royal bg-white text-slate-800' : 'border-[#eadfcf] bg-white/70 text-slate-700'}`}
             >
-              {chip}
+              <p className="font-semibold">Today</p>
+              <p className="mt-1 line-clamp-2 text-xs text-slate-500">
+                {historyThreads.find((item) => item?.threadKey === getThreadKey(ownerKeyRef.current, currentDateKeyRef.current))?.preview || 'Current conversation'}
+              </p>
             </button>
-          ))}
-          </div>
-        </div>
-
-        {messages.map((message) => (
-          <div key={message.id} className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
-            <div className="max-w-[80%]">
-              <div
-                className={
-                  message.role === 'user'
-                    ? 'rounded-2xl rounded-br-md bg-royal px-4 py-3 text-sm text-white shadow-lg whitespace-pre-line'
-                    : 'rounded-2xl rounded-bl-md bg-white px-4 py-3 text-sm text-slate-800 shadow whitespace-pre-line'
-                }
-              >
-                {message.text}
-              </div>
-              {message.role === 'bot' && message.messageId && (
-                <div className="mt-2 flex items-center gap-2 text-xs">
+            <div
+              ref={historyScrollRef}
+              onWheel={handleForcedScroll}
+              className="chat-scroll-region mt-4 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1"
+            >
+              {historyThreads
+                .filter((item) => item?.threadKey !== getThreadKey(ownerKeyRef.current, currentDateKeyRef.current))
+                .map((thread) => (
                   <button
+                    key={thread.threadKey}
                     type="button"
-                    onClick={() => sendFeedback(message.messageId, 5)}
-                    disabled={feedbackStatus[message.messageId] === 'sending' || feedbackStatus[message.messageId] === 'done'}
-                    className="rounded-full border border-[#d7d7d7] bg-white px-3 py-1 text-slate-600 disabled:opacity-50"
+                    onClick={() => showThread(thread)}
+                    className={`w-full rounded-2xl border px-3 py-3 text-left text-sm ${
+                      viewedThreadKey === thread.threadKey ? 'border-royal bg-white text-slate-800' : 'border-[#eadfcf] bg-white/70 text-slate-700'
+                    }`}
                   >
-                    Like
+                    <p className="font-semibold">{thread.dateKey}</p>
+                    <p className="mt-1 line-clamp-3 text-xs text-slate-500">{thread.preview}</p>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => sendFeedback(message.messageId, 1)}
-                    disabled={feedbackStatus[message.messageId] === 'sending' || feedbackStatus[message.messageId] === 'done'}
-                    className="rounded-full border border-[#d7d7d7] bg-white px-3 py-1 text-slate-600 disabled:opacity-50"
-                  >
-                    Dislike
-                  </button>
-                  {feedbackStatus[message.messageId] === 'done' && <span className="text-emerald-600">Feedback saved</span>}
-                  {feedbackStatus[message.messageId] === 'error' && <span className="text-rose-600">Try again</span>}
-                </div>
+                ))}
+              {historyThreads.filter((item) => item?.threadKey !== getThreadKey(ownerKeyRef.current, currentDateKeyRef.current)).length === 0 && (
+                <p className="text-xs text-slate-500">Previous-day chats will appear here.</p>
               )}
             </div>
           </div>
-        ))}
+        )}
 
-        <div className="rounded-2xl border border-[#e9decc] bg-white shadow-sm">
-          <div className="border-b border-[#efe6d8] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Quick Actions</div>
-          {quickActions.map((item, index) => (
-            <button
-              key={item.label}
-              type="button"
-              onClick={() => sendMessage(item.query)}
-              className={`flex w-full items-center justify-between px-4 py-3 text-left transition hover:bg-[#faf4ea] ${
-                index !== quickActions.length - 1 ? 'border-b border-[#efe6d8]' : ''
-              }`}
-            >
-              <div className="flex min-w-0 flex-col">
-                <span className="truncate text-sm font-semibold text-slate-800">{item.label}</span>
-                <span className="text-xs text-slate-500">{item.tone}</span>
+        <div
+          ref={messageScrollRef}
+          onWheel={handleForcedScroll}
+          className="chat-scroll-region h-full min-h-0 overflow-y-scroll px-5 py-4"
+          style={{ overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch' }}
+        >
+          <div className="space-y-5">
+            {isViewingHistory && (
+              <div className="rounded-2xl border border-[#e9decc] bg-white px-4 py-3 text-xs font-semibold text-slate-600 shadow-sm">
+                You are viewing an older conversation. Return to Today to continue chatting.
               </div>
-              <span className="text-lg font-semibold text-slate-400">&gt;</span>
-            </button>
-          ))}
-        </div>
-        <div ref={endRef} />
+            )}
+            <div className="space-y-2">
+              <div className="flex flex-wrap gap-2">
+              {activeSuggestionChips.map((chip) => (
+                <button
+                  key={chip}
+                  type="button"
+                  onClick={() => sendMessage(chip)}
+                  className="rounded-full border border-[#d7d7d7] bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-royal hover:text-royal"
+                >
+                  {chip}
+                </button>
+              ))}
+              </div>
+            </div>
+
+            {messages.map((message) => (
+              <div key={message.id} className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
+                <div className="max-w-[80%]">
+                  <div
+                    className={
+                      message.role === 'user'
+                        ? 'rounded-2xl rounded-br-md bg-royal px-4 py-3 text-sm text-white shadow-lg whitespace-pre-line'
+                        : 'rounded-2xl rounded-bl-md bg-white px-4 py-3 text-sm text-slate-800 shadow whitespace-pre-line'
+                    }
+                  >
+                    {message.text}
+                  </div>
+                  {message.role === 'bot' && message.messageId && (
+                    <div className="mt-2 flex items-center gap-2 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => sendFeedback(message.messageId, 5)}
+                        disabled={feedbackStatus[message.messageId] === 'sending' || feedbackStatus[message.messageId] === 'done'}
+                        className="rounded-full border border-[#d7d7d7] bg-white px-3 py-1 text-slate-600 disabled:opacity-50"
+                      >
+                        Like
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => sendFeedback(message.messageId, 1)}
+                        disabled={feedbackStatus[message.messageId] === 'sending' || feedbackStatus[message.messageId] === 'done'}
+                        className="rounded-full border border-[#d7d7d7] bg-white px-3 py-1 text-slate-600 disabled:opacity-50"
+                      >
+                        Dislike
+                      </button>
+                      {feedbackStatus[message.messageId] === 'done' && <span className="text-emerald-600">Feedback saved</span>}
+                      {feedbackStatus[message.messageId] === 'error' && <span className="text-rose-600">Try again</span>}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            <div className="rounded-2xl border border-[#e9decc] bg-white shadow-sm">
+              <div className="border-b border-[#efe6d8] px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Quick Actions</div>
+              {quickActions.map((item, index) => (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={() => sendMessage(item.query)}
+                  className={`flex w-full items-center justify-between px-4 py-3 text-left transition hover:bg-[#faf4ea] ${
+                    index !== quickActions.length - 1 ? 'border-b border-[#efe6d8]' : ''
+                  }`}
+                >
+                  <div className="flex min-w-0 flex-col">
+                    <span className="truncate text-sm font-semibold text-slate-800">{item.label}</span>
+                    <span className="text-xs text-slate-500">{item.tone}</span>
+                  </div>
+                  <span className="text-lg font-semibold text-slate-400">&gt;</span>
+                </button>
+              ))}
+            </div>
+            <div ref={endRef} />
+          </div>
+      </div>
       </div>
 
       <div className="border-t border-[#e6dfd4] bg-[#f6f0e5] px-5 py-4">
@@ -1020,13 +1308,14 @@ const ChatbotPanel = () => {
                 sendMessage(input)
               }
             }}
+            disabled={isViewingHistory}
             placeholder="Ask about admissions, courses, or services"
             className="flex-1 bg-transparent text-sm text-slate-700 outline-none"
           />
           <button
             type="button"
             onClick={() => sendMessage(input)}
-            disabled={isSending}
+            disabled={isSending || isViewingHistory}
             className="flex h-11 w-11 items-center justify-center rounded-full bg-[#d4a650] text-slate-900 shadow disabled:cursor-not-allowed disabled:opacity-60"
           >
             <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1634,13 +1923,17 @@ const StudentShell = ({ children }) => {
       </button>
 
       {chatOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-transparent p-6"
-          onClick={() => setChatOpen(false)}
-          aria-hidden={!chatOpen}
-        >
-          <div className="h-[92vh] w-[92vw] max-w-[440px]" onClick={(event) => event.stopPropagation()}>
+        <div className="fixed inset-0 z-50">
+          <button
+            type="button"
+            className="absolute inset-0 h-full w-full cursor-default bg-transparent"
+            onClick={() => setChatOpen(false)}
+            aria-label="Close chatbot backdrop"
+          />
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
+            <div className="pointer-events-auto flex h-[92vh] min-h-0 w-[92vw] max-w-[440px] flex-col">
             <ChatbotPanel />
+            </div>
           </div>
         </div>
       )}

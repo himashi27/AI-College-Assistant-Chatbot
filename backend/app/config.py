@@ -23,7 +23,10 @@ class Settings(BaseSettings):
     chat_rate_limit_per_minute: int = 30
     portal_config_path: str = "data/portal_config.json"
 
+    llm_provider: str = "auto"
     groq_api_key: str = ""
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
     supabase_url: str = ""
     supabase_key: str = ""
     redis_url: str = ""

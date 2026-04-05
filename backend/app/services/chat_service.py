@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from typing import List
 
 from app.schemas import ChatRequest, ChatResponse
 from app.services.faculty_chat_service import FacultyChatService
@@ -27,9 +28,12 @@ class ChatService:
         faculty_reply = self.faculty_chat.generate_reply(user_id=req.user_id, message=req.message) if persona == "faculty" else None
 
         context = "\n".join([f"- {item.snippet}" for item in sources])
+        history_text = self._format_history(req.history)
         prompt = (
             f"You are assisting a {persona} in a university portal chatbot.\n"
             "Answer using available university context when relevant, and adapt the explanation to that persona.\n"
+            "If the user asks to shorten, simplify, summarize, or rephrase, apply that transformation to the latest relevant assistant answer from the conversation history.\n"
+            f"Recent conversation:\n{history_text}\n"
             f"Question: {req.message}\n"
             f"Context:\n{context if context else 'No matching local context found.'}"
         )
@@ -76,3 +80,16 @@ class ChatService:
             "I could not find a confident answer yet. Please contact the help desk or provide more details "
             "like subject, semester, or request type."
         )
+
+    def _format_history(self, history: List) -> str:
+        if not history:
+            return "No previous conversation."
+
+        lines: list[str] = []
+        for item in history[-6:]:
+            role = getattr(item, "role", "") or ""
+            text = getattr(item, "text", "") or ""
+            if not role or not text:
+                continue
+            lines.append(f"{role.title()}: {text}")
+        return "\n".join(lines) if lines else "No previous conversation."

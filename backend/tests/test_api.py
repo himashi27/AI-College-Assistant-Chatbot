@@ -95,6 +95,37 @@ def test_chat_prompt_includes_persona(monkeypatch) -> None:
     assert "assisting a faculty" in captured_prompt["value"].lower()
 
 
+def test_chat_prompt_includes_recent_history(monkeypatch) -> None:
+    from app.api.routes import chat_service
+
+    captured_prompt = {"value": ""}
+
+    async def fake_generate_reply(prompt: str):
+        captured_prompt["value"] = prompt
+        return "ok"
+
+    monkeypatch.setattr(chat_service.groq, "generate_reply", fake_generate_reply)
+
+    response = client.post(
+        "/api/chat",
+        json={
+            "session_id": "session-history",
+            "user_id": "AI23001",
+            "message": "make it short",
+            "role": "student",
+            "language": "en",
+            "history": [
+                {"role": "user", "text": "what is normalization"},
+                {"role": "bot", "text": "Normalization organizes database tables to reduce redundancy and improve consistency."},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert "make it short" in captured_prompt["value"].lower()
+    assert "normalization organizes database tables" in captured_prompt["value"].lower()
+
+
 def test_chat_faculty_class_query_uses_deterministic_data(monkeypatch) -> None:
     from app.api.routes import chat_service
 

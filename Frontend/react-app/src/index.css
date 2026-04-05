@@ -11,3 +11,30 @@
     @apply min-h-screen;
   }
 }
+
+@layer components {
+  .chat-scroll-region {
+    scrollbar-width: auto;
+    scrollbar-color: #caa25b #f3eadb;
+    touch-action: pan-y;
+  }
+
+  .chat-scroll-region::-webkit-scrollbar {
+    width: 12px;
+  }
+
+  .chat-scroll-region::-webkit-scrollbar-track {
+    background: #f3eadb;
+    border-radius: 9999px;
+  }
+
+  .chat-scroll-region::-webkit-scrollbar-thumb {
+    background: #caa25b;
+    border-radius: 9999px;
+    border: 2px solid #f3eadb;
+  }
+
+  .chat-scroll-region::-webkit-scrollbar-thumb:hover {
+    background: #b68d48;
+  }
+}

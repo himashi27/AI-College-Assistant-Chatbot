@@ -3,12 +3,18 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
+class ChatHistoryItem(BaseModel):
+    role: str = Field(..., min_length=1, max_length=32)
+    text: str = Field(..., min_length=1, max_length=4000)
+
+
 class ChatRequest(BaseModel):
     session_id: str = Field(..., min_length=1, max_length=128)
     user_id: Optional[str] = Field(default=None, max_length=128)
     message: str = Field(..., min_length=1, max_length=2000)
     role: str = Field(default="student", max_length=32)
     language: str = Field(default="en", max_length=16)
+    history: List[ChatHistoryItem] = Field(default_factory=list, max_length=12)
 
 
 class SourceItem(BaseModel):
