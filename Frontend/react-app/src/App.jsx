@@ -146,8 +146,16 @@ const getThreadKey = (ownerKey, dateKey) => `${ownerKey}:${dateKey}`
 
 const buildThreadPreview = (messages) => {
   const meaningful = (messages || []).filter((item) => item?.role === 'user' || item?.role === 'bot')
-  const last = meaningful[meaningful.length - 1]
-  return last?.text || 'Conversation started'
+  const firstUser = meaningful.find((item) => item?.role === 'user' && item?.text)
+  return firstUser?.text || meaningful[meaningful.length - 1]?.text || 'Conversation started'
+}
+
+const formatThreadLabel = (dateKey) => {
+  if (!dateKey) return 'Previous Chat'
+  if (dateKey === getLocalDateKey()) return 'Today'
+  const parsed = new Date(`${dateKey}T00:00:00`)
+  if (Number.isNaN(parsed.getTime())) return dateKey
+  return parsed.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
 }
 
 const normalizeText = (value) =>
@@ -1129,12 +1137,43 @@ const ChatbotPanel = () => {
     setHistoryOpen(false)
   }
 
+  const startFreshTodayChat = () => {
+    const welcome = [getWelcomeMessage(selectedPersona)]
+    sessionIdRef.current = `web-${Date.now()}`
+    routeContextRef.current = null
+    localStorage.setItem('chat_session_id', sessionIdRef.current)
+    localStorage.removeItem('chat_route_context')
+    setViewedThreadKey(getThreadKey(ownerKeyRef.current, currentDateKeyRef.current))
+    setMessages(welcome)
+    setInput('')
+    upsertChatThread({
+      threadKey: getThreadKey(ownerKeyRef.current, currentDateKeyRef.current),
+      ownerKey: ownerKeyRef.current,
+      dateKey: currentDateKeyRef.current,
+      sessionId: sessionIdRef.current,
+      persona: selectedPersona,
+      userId: studentIdRef.current,
+      title: 'Today',
+      preview: buildThreadPreview(welcome),
+      messages: welcome,
+      routeContext: null,
+      lastUpdatedAt: new Date().toISOString(),
+    })
+    setHistoryThreads(getStoredChatThreads().filter((item) => item?.ownerKey === ownerKeyRef.current))
+    setHistoryOpen(false)
+  }
+
   const isViewingHistory = viewedThreadKey && viewedThreadKey !== getThreadKey(ownerKeyRef.current, currentDateKeyRef.current)
   const handleForcedScroll = (event) => {
     const target = event.currentTarget
     if (!target) return
     target.scrollTop += event.deltaY
   }
+  const inputPlaceholder = isViewingHistory
+    ? 'Return to Today to continue chatting'
+    : selectedPersona === 'faculty'
+      ? 'Ask about classes, reviews, or attendance alerts'
+      : 'Ask about attendance, syllabus, fees, or assignments'
 
   return (
     <div className="grid h-full min-h-0 grid-rows-[auto,minmax(0,1fr),auto] overflow-hidden rounded-[26px] bg-[#f6f0e5] shadow-2xl">
@@ -1173,10 +1212,17 @@ const ChatbotPanel = () => {
             </div>
             <button
               type="button"
+              onClick={startFreshTodayChat}
+              className="mt-3 w-full rounded-2xl bg-royal px-3 py-3 text-left text-sm font-semibold text-white shadow-sm"
+            >
+              New Chat
+            </button>
+            <button
+              type="button"
               onClick={goToTodayThread}
               className={`mt-4 w-full rounded-2xl border px-3 py-3 text-left text-sm ${!isViewingHistory ? 'border-royal bg-white text-slate-800' : 'border-[#eadfcf] bg-white/70 text-slate-700'}`}
             >
-              <p className="font-semibold">Today</p>
+              <p className="font-semibold">{formatThreadLabel(currentDateKeyRef.current)}</p>
               <p className="mt-1 line-clamp-2 text-xs text-slate-500">
                 {historyThreads.find((item) => item?.threadKey === getThreadKey(ownerKeyRef.current, currentDateKeyRef.current))?.preview || 'Current conversation'}
               </p>
@@ -1197,7 +1243,7 @@ const ChatbotPanel = () => {
                       viewedThreadKey === thread.threadKey ? 'border-royal bg-white text-slate-800' : 'border-[#eadfcf] bg-white/70 text-slate-700'
                     }`}
                   >
-                    <p className="font-semibold">{thread.dateKey}</p>
+                    <p className="font-semibold">{formatThreadLabel(thread.dateKey)}</p>
                     <p className="mt-1 line-clamp-3 text-xs text-slate-500">{thread.preview}</p>
                   </button>
                 ))}
@@ -1309,7 +1355,7 @@ const ChatbotPanel = () => {
               }
             }}
             disabled={isViewingHistory}
-            placeholder="Ask about admissions, courses, or services"
+            placeholder={inputPlaceholder}
             className="flex-1 bg-transparent text-sm text-slate-700 outline-none"
           />
           <button
