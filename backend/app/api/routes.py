@@ -2,11 +2,16 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 
 from app.config import get_settings
 from app.schemas import (
+    AdminAnnouncementRequest,
+    AdminAnnouncementResponse,
+    AdminFeedbackItem,
     AdminStatsResponse,
+    AdminReportItem,
     AssignmentParseRequest,
     AssignmentParseResponse,
     AdminLoginRequest,
     AdminLoginResponse,
+    AdminUserItem,
     ChatRequest,
     ChatResponse,
     FeedbackRequest,
@@ -31,6 +36,7 @@ from app.services.auth_service import AuthService
 from app.services.persistence import PersistenceService
 from app.services.query_router import QueryRouterService
 from app.services.identity_service import IdentityService
+from app.services.admin_service import AdminService
 from app.services.student_context_service import StudentContextService
 
 router = APIRouter()
@@ -42,6 +48,7 @@ assignment_service = AssignmentService()
 portal_data_service = PortalDataService()
 student_context_service = StudentContextService()
 identity_service = IdentityService()
+admin_service = AdminService()
 
 
 def _route_ack_text(route_result: QueryRouteResponse) -> str:
@@ -76,7 +83,7 @@ async def portal_login(payload: PortalLoginRequest) -> PortalLoginResponse:
     if not resolved:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="No matching portal account found for this login type.",
+            detail=identity_service.login_error_message(email=payload.email, persona=payload.persona),
         )
     return PortalLoginResponse(**resolved)
 
@@ -268,6 +275,27 @@ async def admin_recent_queries() -> list[RecentQueryItem]:
 @router.get("/admin/top-intents", response_model=list[TopIntentItem], dependencies=[Depends(require_admin)])
 async def admin_top_intents() -> list[TopIntentItem]:
     return persistence_service.get_top_intents()
+
+
+@router.get("/admin/users", response_model=list[AdminUserItem], dependencies=[Depends(require_admin)])
+async def admin_users() -> list[AdminUserItem]:
+    return admin_service.list_users()
+
+
+@router.get("/admin/reports", response_model=list[AdminReportItem], dependencies=[Depends(require_admin)])
+async def admin_reports() -> list[AdminReportItem]:
+    return persistence_service.get_flagged_reports()
+
+
+@router.get("/admin/feedback", response_model=list[AdminFeedbackItem], dependencies=[Depends(require_admin)])
+async def admin_feedback() -> list[AdminFeedbackItem]:
+    return persistence_service.get_feedback_entries()
+
+
+@router.post("/admin/announcements", response_model=AdminAnnouncementResponse, dependencies=[Depends(require_admin)])
+async def admin_announcements(payload: AdminAnnouncementRequest) -> AdminAnnouncementResponse:
+    announcement_id = f"announce-{abs(hash((payload.title, payload.message, payload.audience))) % 1000000}"
+    return AdminAnnouncementResponse(status="queued", announcement_id=announcement_id)
 
 
 @router.post("/feedback", response_model=FeedbackResponse)

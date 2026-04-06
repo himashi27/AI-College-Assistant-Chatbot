@@ -358,6 +358,22 @@ const systemStatus = [
   { name: 'Notifications', status: 'Operational' },
 ]
 
+const ADMIN_USER_STATE_STORAGE_KEY = 'admin_user_state'
+const ADMIN_ANNOUNCEMENTS_STORAGE_KEY = 'admin_announcements'
+const ADMIN_FEEDBACK_REVIEW_STORAGE_KEY = 'admin_feedback_reviews'
+const ADMIN_REPORT_STATUS_STORAGE_KEY = 'admin_report_statuses'
+
+const getStoredJson = (storageKey, fallbackValue) => {
+  try {
+    const raw = localStorage.getItem(storageKey)
+    return raw ? JSON.parse(raw) : fallbackValue
+  } catch {
+    return fallbackValue
+  }
+}
+
+const saveStoredJson = (storageKey, value) => localStorage.setItem(storageKey, JSON.stringify(value))
+
 const DashboardLayout = ({ children, showAdminLink = false, onLogout, currentUser }) => {
   const [sidebarExpanded, setSidebarExpanded] = useState(false)
   const sidebarTimer = useRef()
@@ -484,8 +500,37 @@ const AdminDashboard = ({ adminToken, onUnauthorized }) => {
   const [stats, setStats] = useState(null)
   const [recentQueries, setRecentQueries] = useState([])
   const [topIntents, setTopIntents] = useState([])
+  const [adminUsers, setAdminUsers] = useState([])
+  const [flaggedReports, setFlaggedReports] = useState([])
+  const [feedbackEntries, setFeedbackEntries] = useState([])
+  const [userState, setUserState] = useState(() => getStoredJson(ADMIN_USER_STATE_STORAGE_KEY, {}))
+  const [announcements, setAnnouncements] = useState(() => getStoredJson(ADMIN_ANNOUNCEMENTS_STORAGE_KEY, []))
+  const [feedbackReviews, setFeedbackReviews] = useState(() => getStoredJson(ADMIN_FEEDBACK_REVIEW_STORAGE_KEY, {}))
+  const [reportStatuses, setReportStatuses] = useState(() => getStoredJson(ADMIN_REPORT_STATUS_STORAGE_KEY, {}))
+  const [announcementDraft, setAnnouncementDraft] = useState({
+    title: '',
+    message: '',
+    audience: 'students',
+  })
+  const [announcementStatus, setAnnouncementStatus] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    saveStoredJson(ADMIN_USER_STATE_STORAGE_KEY, userState)
+  }, [userState])
+
+  useEffect(() => {
+    saveStoredJson(ADMIN_ANNOUNCEMENTS_STORAGE_KEY, announcements)
+  }, [announcements])
+
+  useEffect(() => {
+    saveStoredJson(ADMIN_FEEDBACK_REVIEW_STORAGE_KEY, feedbackReviews)
+  }, [feedbackReviews])
+
+  useEffect(() => {
+    saveStoredJson(ADMIN_REPORT_STATUS_STORAGE_KEY, reportStatuses)
+  }, [reportStatuses])
 
   useEffect(() => {
     let mounted = true
@@ -496,16 +541,22 @@ const AdminDashboard = ({ adminToken, onUnauthorized }) => {
       }
       try {
         const headers = adminToken ? { Authorization: `Bearer ${adminToken}` } : {}
-        const [statsRes, recentRes, intentsRes] = await Promise.all([
+        const [statsRes, recentRes, intentsRes, usersRes, reportsRes, feedbackRes] = await Promise.all([
           fetch(`${API_BASE_URL}/api/admin/stats`, { headers }),
           fetch(`${API_BASE_URL}/api/admin/recent-queries`, { headers }),
           fetch(`${API_BASE_URL}/api/admin/top-intents`, { headers }),
+          fetch(`${API_BASE_URL}/api/admin/users`, { headers }),
+          fetch(`${API_BASE_URL}/api/admin/reports`, { headers }),
+          fetch(`${API_BASE_URL}/api/admin/feedback`, { headers }),
         ])
 
         if (
           statsRes.status === 401 ||
           recentRes.status === 401 ||
-          intentsRes.status === 401
+          intentsRes.status === 401 ||
+          usersRes.status === 401 ||
+          reportsRes.status === 401 ||
+          feedbackRes.status === 401
         ) {
           if (onUnauthorized) {
             onUnauthorized()
@@ -513,14 +564,17 @@ const AdminDashboard = ({ adminToken, onUnauthorized }) => {
           return
         }
 
-        if (!statsRes.ok || !recentRes.ok || !intentsRes.ok) {
+        if (!statsRes.ok || !recentRes.ok || !intentsRes.ok || !usersRes.ok || !reportsRes.ok || !feedbackRes.ok) {
           throw new Error('Failed to load admin analytics')
         }
 
-        const [statsPayload, recentPayload, intentsPayload] = await Promise.all([
+        const [statsPayload, recentPayload, intentsPayload, usersPayload, reportsPayload, feedbackPayload] = await Promise.all([
           statsRes.json(),
           recentRes.json(),
           intentsRes.json(),
+          usersRes.json(),
+          reportsRes.json(),
+          feedbackRes.json(),
         ])
 
         if (!mounted) return
@@ -528,9 +582,12 @@ const AdminDashboard = ({ adminToken, onUnauthorized }) => {
         setStats(statsPayload)
         setRecentQueries(Array.isArray(recentPayload) ? recentPayload : [])
         setTopIntents(Array.isArray(intentsPayload) ? intentsPayload : [])
+        setAdminUsers(Array.isArray(usersPayload) ? usersPayload : [])
+        setFlaggedReports(Array.isArray(reportsPayload) ? reportsPayload : [])
+        setFeedbackEntries(Array.isArray(feedbackPayload) ? feedbackPayload : [])
       } catch {
         if (!mounted) return
-        setError('Unable to load live admin analytics right now.')
+        setError('Unable to load live admin controls right now.')
       } finally {
         if (mounted && !quiet) {
           setLoading(false)
@@ -557,6 +614,85 @@ const AdminDashboard = ({ adminToken, onUnauthorized }) => {
   ]
 
   const maxIntentValue = Math.max(1, ...topIntents.map((intent) => intent.value || 0))
+  const visibleReports = flaggedReports.filter((item) => reportStatuses[item.report_id] !== 'resolved')
+  const activeAnnouncements = announcements.slice().sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+  const mergedFeedbackEntries =
+    feedbackEntries.length > 0
+      ? feedbackEntries
+      : feedbackList.map((item, index) => ({
+          message_id: `demo-feedback-${index + 1}`,
+          rating: item.rating,
+          comment: item.text,
+          created_at: null,
+        }))
+
+  const setUserFlag = (userId, updates) => {
+    setUserState((current) => ({
+      ...current,
+      [userId]: {
+        ...(current[userId] || {}),
+        ...updates,
+      },
+    }))
+  }
+
+  const markReportResolved = (reportId) => {
+    setReportStatuses((current) => ({ ...current, [reportId]: 'resolved' }))
+  }
+
+  const saveFeedbackReview = (messageId, updates) => {
+    setFeedbackReviews((current) => ({
+      ...current,
+      [messageId]: {
+        ...(current[messageId] || {}),
+        ...updates,
+      },
+    }))
+  }
+
+  const publishAnnouncement = async () => {
+    if (!announcementDraft.title.trim() || !announcementDraft.message.trim()) {
+      setAnnouncementStatus('Please add both a title and a message before sending the alert.')
+      return
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/announcements`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify(announcementDraft),
+      })
+
+      if (response.status === 401) {
+        if (onUnauthorized) {
+          onUnauthorized()
+        }
+        return
+      }
+
+      if (!response.ok) {
+        throw new Error('Announcement failed')
+      }
+
+      const payload = await response.json()
+      setAnnouncements((current) => [
+        {
+          id: payload.announcement_id,
+          ...announcementDraft,
+          createdAt: new Date().toISOString(),
+          status: payload.status,
+        },
+        ...current,
+      ])
+      setAnnouncementDraft({ title: '', message: '', audience: 'students' })
+      setAnnouncementStatus('Announcement queued for chatbot delivery preview.')
+    } catch {
+      setAnnouncementStatus('Could not queue the announcement right now.')
+    }
+  }
 
   return (
     <div className="space-y-8">
@@ -690,6 +826,239 @@ const AdminDashboard = ({ adminToken, onUnauthorized }) => {
               </div>
             </div>
           ))}
+        </div>
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-2">
+        <div className="rounded-2xl border border-[#e5edf8] bg-white p-5 shadow-sm">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-800">Student Accounts & Verification</h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Manage student accounts, verify users, and keep access safe.
+              </p>
+            </div>
+            <span className="rounded-full bg-[#f1f6ff] px-3 py-1 text-xs font-semibold text-[#1f4ea7]">
+              {adminUsers.length} users
+            </span>
+          </div>
+          <div className="mt-5 space-y-3">
+            {adminUsers.slice(0, 8).map((user) => {
+              const state = userState[user.user_id] || {}
+              const isVerified = state.verified ?? user.persona === 'faculty'
+              const isBlocked = Boolean(state.blocked)
+              return (
+                <div key={user.user_id} className="rounded-2xl border border-[#eef2f8] bg-[#fcfdff] p-4">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-800">{user.name}</p>
+                      <p className="text-xs text-slate-500">{user.email || user.user_id}</p>
+                      <p className="mt-1 text-xs uppercase tracking-wide text-slate-400">
+                        {user.persona} {user.semester ? `• Sem ${user.semester}` : ''}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <span className={`rounded-full px-3 py-1 text-xs font-semibold ${isVerified ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                        {isVerified ? 'Verified' : 'Pending'}
+                      </span>
+                      <span className={`rounded-full px-3 py-1 text-xs font-semibold ${isBlocked ? 'bg-rose-50 text-rose-600' : 'bg-slate-100 text-slate-500'}`}>
+                        {isBlocked ? 'Blocked' : 'Active'}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setUserFlag(user.user_id, { verified: !isVerified })}
+                      className="rounded-xl bg-emerald-700 px-3 py-2 text-xs font-semibold text-white"
+                    >
+                      {isVerified ? 'Unverify' : 'Verify User'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setUserFlag(user.user_id, { blocked: !isBlocked })}
+                      className="rounded-xl border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-500"
+                    >
+                      {isBlocked ? 'Restore Access' : 'Block Account'}
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-[#e5edf8] bg-white p-5 shadow-sm">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-800">Misuse & Inappropriate Query Reports</h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Review flagged chatbot queries and resolve misuse reports.
+              </p>
+            </div>
+            <span className="rounded-full bg-[#fff7ed] px-3 py-1 text-xs font-semibold text-amber-600">
+              {visibleReports.length} open
+            </span>
+          </div>
+          <div className="mt-5 space-y-3">
+            {visibleReports.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-[#d8e3f5] bg-[#f8faff] px-4 py-5 text-sm text-slate-500">
+                No flagged misuse reports right now.
+              </div>
+            ) : (
+              visibleReports.map((report) => (
+                <div key={report.report_id} className="rounded-2xl border border-[#eef2f8] bg-[#fcfdff] p-4">
+                  <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-800">{report.reason}</p>
+                      <p className="mt-1 text-sm text-slate-600">{report.query}</p>
+                      <p className="mt-2 text-xs text-slate-400">
+                        Session: {report.session_id || '-'} {report.created_at ? `• ${new Date(report.created_at).toLocaleString()}` : ''}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => markReportResolved(report.report_id)}
+                      className="rounded-xl bg-royal px-3 py-2 text-xs font-semibold text-white"
+                    >
+                      Mark Resolved
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+        <div className="rounded-2xl border border-[#e5edf8] bg-white p-5 shadow-sm">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-semibold text-slate-800">Announcements & Alerts</h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Send important announcements or alerts to students through the chatbot workflow.
+              </p>
+            </div>
+            <span className="rounded-full bg-[#eef6ff] px-3 py-1 text-xs font-semibold text-royal">
+              Chatbot notices
+            </span>
+          </div>
+
+          <div className="mt-5 grid gap-3">
+            <input
+              type="text"
+              value={announcementDraft.title}
+              onChange={(event) => setAnnouncementDraft((current) => ({ ...current, title: event.target.value }))}
+              placeholder="Announcement title"
+              className="rounded-2xl border border-[#dbe4f4] px-4 py-3 text-sm outline-none focus:border-royal"
+            />
+            <textarea
+              value={announcementDraft.message}
+              onChange={(event) => setAnnouncementDraft((current) => ({ ...current, message: event.target.value }))}
+              placeholder="Write the alert or notice students should receive."
+              rows={4}
+              className="rounded-2xl border border-[#dbe4f4] px-4 py-3 text-sm outline-none focus:border-royal"
+            />
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <select
+                value={announcementDraft.audience}
+                onChange={(event) => setAnnouncementDraft((current) => ({ ...current, audience: event.target.value }))}
+                className="rounded-2xl border border-[#dbe4f4] px-4 py-3 text-sm outline-none focus:border-royal"
+              >
+                <option value="students">Students</option>
+                <option value="faculty">Faculty</option>
+                <option value="all">All Users</option>
+              </select>
+              <button
+                type="button"
+                onClick={publishAnnouncement}
+                className="rounded-2xl bg-royal px-5 py-3 text-sm font-semibold text-white shadow"
+              >
+                Send Announcement
+              </button>
+            </div>
+            {announcementStatus && (
+              <p className="text-sm text-slate-500">{announcementStatus}</p>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-[#e5edf8] bg-white p-5 shadow-sm">
+          <h3 className="text-lg font-semibold text-slate-800">Recent Announcements</h3>
+          <div className="mt-4 space-y-3">
+            {activeAnnouncements.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-[#d8e3f5] bg-[#f8faff] px-4 py-5 text-sm text-slate-500">
+                No announcements have been sent yet.
+              </div>
+            ) : (
+              activeAnnouncements.slice(0, 4).map((item) => (
+                <div key={item.id} className="rounded-2xl border border-[#eef2f8] bg-[#f8faff] p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-slate-800">{item.title}</p>
+                    <span className="rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-semibold uppercase text-emerald-600">
+                      {item.audience}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm text-slate-600">{item.message}</p>
+                  <p className="mt-2 text-xs text-slate-400">
+                    {item.createdAt ? new Date(item.createdAt).toLocaleString() : 'Queued'} • {item.status || 'queued'}
+                  </p>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-[#e5edf8] bg-white p-5 shadow-sm">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-semibold text-slate-800">Feedback Review & Content Updates</h3>
+            <p className="mt-1 text-sm text-slate-500">
+              Review student feedback on chatbot answers and track content corrections.
+            </p>
+          </div>
+          <span className="rounded-full bg-[#fff7ed] px-3 py-1 text-xs font-semibold text-amber-600">
+            {mergedFeedbackEntries.length} items
+          </span>
+        </div>
+        <div className="mt-5 grid gap-4 lg:grid-cols-2">
+          {mergedFeedbackEntries.map((item) => {
+            const review = feedbackReviews[item.message_id] || {}
+            return (
+              <div key={item.message_id} className="rounded-2xl border border-[#eef2f8] bg-[#fcfdff] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold text-slate-800">Message ID: {item.message_id}</div>
+                  <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-600">
+                    {item.rating}/5
+                  </span>
+                </div>
+                <p className="mt-3 text-sm text-slate-600">{item.comment || 'No written feedback provided.'}</p>
+                <textarea
+                  value={review.note || ''}
+                  onChange={(event) => saveFeedbackReview(item.message_id, { note: event.target.value })}
+                  placeholder="Admin update note: corrected topic, refreshed dataset, or reviewed response."
+                  rows={3}
+                  className="mt-4 w-full rounded-2xl border border-[#dbe4f4] px-4 py-3 text-sm outline-none focus:border-royal"
+                />
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => saveFeedbackReview(item.message_id, { reviewed: !review.reviewed })}
+                    className="rounded-xl bg-emerald-700 px-3 py-2 text-xs font-semibold text-white"
+                  >
+                    {review.reviewed ? 'Reviewed' : 'Mark Reviewed'}
+                  </button>
+                  {review.reviewed && (
+                    <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-600">
+                      Content update tracked
+                    </span>
+                  )}
+                </div>
+              </div>
+            )
+          })}
         </div>
       </div>
     </div>
@@ -1518,7 +1887,16 @@ const PersonaLoginPage = () => {
       })
 
       if (!response.ok) {
-        throw new Error('LOGIN_FAILED')
+        let detail = 'This Outlook ID is not mapped yet for the selected login type.'
+        try {
+          const payload = await response.json()
+          if (payload?.detail) {
+            detail = payload.detail
+          }
+        } catch {
+          // keep default error
+        }
+        throw new Error(detail)
       }
 
       const payload = await response.json()
@@ -1538,8 +1916,8 @@ const PersonaLoginPage = () => {
       }
 
       navigate('/', { replace: true })
-    } catch {
-      setError('This Outlook ID is not mapped yet for the selected login type.')
+    } catch (err) {
+      setError(err?.message || 'This Outlook ID is not mapped yet for the selected login type.')
     } finally {
       setLoading(false)
     }

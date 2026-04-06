@@ -48,3 +48,19 @@ class IdentityService:
             }
 
         return None
+
+    def login_error_message(self, *, email: str, persona: str) -> str:
+        normalized_email = (email or "").strip().lower()
+        normalized_persona = (persona or "").strip().lower()
+
+        if normalized_persona == "student":
+            if normalized_email in self._faculty_email_map:
+                return "This Outlook ID is mapped for staff access. Please use Staff Login."
+            return "This Outlook ID is not mapped for student access yet."
+
+        if normalized_persona in {"staff", "faculty", "teacher"}:
+            if normalized_email in self._student_email_map:
+                return "This Outlook ID is mapped for student access. Please use Student Login."
+            return "This Outlook ID is not mapped for staff access yet."
+
+        return "No matching portal account found for this login type."

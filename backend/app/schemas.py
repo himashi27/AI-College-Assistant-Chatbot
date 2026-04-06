@@ -55,6 +55,40 @@ class TopIntentItem(BaseModel):
     value: int
 
 
+class AdminUserItem(BaseModel):
+    user_id: str
+    name: str
+    email: str
+    persona: str
+    semester: Optional[int] = None
+
+
+class AdminReportItem(BaseModel):
+    report_id: str
+    session_id: str
+    query: str
+    created_at: Optional[str] = None
+    reason: str
+
+
+class AdminFeedbackItem(BaseModel):
+    message_id: str
+    rating: int
+    comment: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class AdminAnnouncementRequest(BaseModel):
+    title: str = Field(..., min_length=3, max_length=160)
+    message: str = Field(..., min_length=3, max_length=1000)
+    audience: str = Field(default="students", min_length=3, max_length=32)
+
+
+class AdminAnnouncementResponse(BaseModel):
+    status: str
+    announcement_id: str
+
+
 class FeedbackRequest(BaseModel):
     message_id: str = Field(..., min_length=1, max_length=128)
     rating: int = Field(..., ge=1, le=5)

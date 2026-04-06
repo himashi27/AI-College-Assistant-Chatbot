@@ -41,6 +41,16 @@ def test_portal_login_staff_success() -> None:
     assert payload["user_id"] == "FAC1001"
 
 
+def test_portal_login_staff_rejects_student_email_with_clear_message() -> None:
+    response = client.post(
+        "/api/auth/login",
+        json={"email": "aditi.singh@krmangalam.edu.in", "persona": "staff"},
+    )
+
+    assert response.status_code == 401
+    assert "student access" in response.json()["detail"].lower()
+
+
 def test_chat_returns_fallback_when_llm_unavailable(monkeypatch) -> None:
     from app.api.routes import chat_service
 
@@ -741,6 +751,28 @@ def test_admin_recent_queries_endpoint_shape(monkeypatch) -> None:
     assert payload[0]["session_id"] == "session-1"
 
 
+def test_recent_queries_falls_back_to_intent_logs_when_messages_empty(monkeypatch) -> None:
+    from app.services.persistence import PersistenceService
+
+    service = PersistenceService()
+    service._enabled = False
+    service._mem_messages = []
+    service._mem_intents = [
+        {
+            "session_id": "session-fallback",
+            "query": "attendance of dbms",
+            "intent": "attendance",
+            "created_at": "2026-04-06T10:00:00Z",
+        }
+    ]
+
+    items = service.get_recent_queries(limit=5)
+
+    assert len(items) == 1
+    assert items[0].query == "attendance of dbms"
+    assert items[0].session_id == "session-fallback"
+
+
 def test_admin_top_intents_endpoint_shape(monkeypatch) -> None:
     from app.api.routes import auth_service, persistence_service
     from app.schemas import TopIntentItem
@@ -755,6 +787,70 @@ def test_admin_top_intents_endpoint_shape(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()[0] == {"name": "admissions", "value": 8}
+
+
+def test_admin_users_endpoint_shape(monkeypatch) -> None:
+    from app.api.routes import admin_service, auth_service
+    from app.schemas import AdminUserItem
+
+    monkeypatch.setattr(auth_service, "token_is_admin", lambda token: token == "admin-token")
+    monkeypatch.setattr(
+        admin_service,
+        "list_users",
+        lambda: [AdminUserItem(user_id="AI23001", name="Rahul", email="rahul@krmangalam.edu.in", persona="student", semester=3)],
+    )
+    response = client.get("/api/admin/users", headers=ADMIN_HEADERS)
+
+    assert response.status_code == 200
+    assert response.json()[0]["email"] == "rahul@krmangalam.edu.in"
+
+
+def test_admin_reports_endpoint_shape(monkeypatch) -> None:
+    from app.api.routes import auth_service, persistence_service
+    from app.schemas import AdminReportItem
+
+    monkeypatch.setattr(auth_service, "token_is_admin", lambda token: token == "admin-token")
+    monkeypatch.setattr(
+        persistence_service,
+        "get_flagged_reports",
+        lambda: [AdminReportItem(report_id="r1", session_id="s1", query="how to hack portal", created_at="2026-04-06T08:00:00Z", reason="Possible misuse request")],
+    )
+    response = client.get("/api/admin/reports", headers=ADMIN_HEADERS)
+
+    assert response.status_code == 200
+    assert response.json()[0]["reason"] == "Possible misuse request"
+
+
+def test_admin_feedback_endpoint_shape(monkeypatch) -> None:
+    from app.api.routes import auth_service, persistence_service
+    from app.schemas import AdminFeedbackItem
+
+    monkeypatch.setattr(auth_service, "token_is_admin", lambda token: token == "admin-token")
+    monkeypatch.setattr(
+        persistence_service,
+        "get_feedback_entries",
+        lambda: [AdminFeedbackItem(message_id="m1", rating=4, comment="Please improve DBMS answer", created_at="2026-04-06T08:00:00Z")],
+    )
+    response = client.get("/api/admin/feedback", headers=ADMIN_HEADERS)
+
+    assert response.status_code == 200
+    assert response.json()[0]["message_id"] == "m1"
+
+
+def test_admin_announcements_endpoint_shape(monkeypatch) -> None:
+    from app.api.routes import auth_service
+
+    monkeypatch.setattr(auth_service, "token_is_admin", lambda token: token == "admin-token")
+    response = client.post(
+        "/api/admin/announcements",
+        headers=ADMIN_HEADERS,
+        json={"title": "Exam Alert", "message": "Mid sem exams start Monday.", "audience": "students"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "queued"
+    assert payload["announcement_id"].startswith("announce-")
 
 
 def test_admin_endpoint_requires_key() -> None:

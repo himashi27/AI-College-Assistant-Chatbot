@@ -6,7 +6,7 @@ import uuid
 from typing import List
 
 from app.config import get_settings
-from app.schemas import AdminStatsResponse, ChatRequest, FeedbackRequest, RecentQueryItem, SourceItem, TopIntentItem
+from app.schemas import AdminFeedbackItem, AdminReportItem, AdminStatsResponse, ChatRequest, FeedbackRequest, RecentQueryItem, SourceItem, TopIntentItem
 
 try:
     from supabase import Client, create_client
@@ -24,6 +24,14 @@ class PersistenceService:
         self._mem_messages: list[dict] = []
         self._mem_intents: list[dict] = []
         self._mem_feedback: list[dict] = []
+        self._report_keywords = {
+            "hack": "Possible misuse request",
+            "bypass": "Possible misuse request",
+            "password": "Sensitive credential-related query",
+            "exploit": "Potential exploitation query",
+            "abuse": "Potential inappropriate use",
+            "inappropriate": "Potential inappropriate content",
+        }
 
         if self._enabled:
             self._client = create_client(settings.supabase_url, settings.supabase_key)
@@ -320,7 +328,7 @@ class PersistenceService:
         if not self.enabled:
             rows = [row for row in self._mem_messages if row.get("role") == "user"]
             rows = sorted(rows, key=lambda item: item.get("created_at", ""), reverse=True)[:limit]
-            return [
+            items = [
                 RecentQueryItem(
                     query=row.get("message", ""),
                     session_id=row.get("session_id", ""),
@@ -328,6 +336,9 @@ class PersistenceService:
                 )
                 for row in rows
             ]
+            if items:
+                return items
+            return self._recent_queries_from_intents(limit)
 
         try:
             rows = (
@@ -338,9 +349,43 @@ class PersistenceService:
                 .limit(limit)
                 .execute()
             )
-            return [
+            items = [
                 RecentQueryItem(
                     query=row.get("message", ""),
+                    session_id=row.get("session_id", ""),
+                    created_at=row.get("created_at"),
+                )
+                for row in (rows.data or [])
+            ]
+            if items:
+                return items
+            return self._recent_queries_from_intents(limit)
+        except Exception:
+            return self._recent_queries_from_intents(limit)
+
+    def _recent_queries_from_intents(self, limit: int = 10) -> List[RecentQueryItem]:
+        if not self.enabled:
+            rows = sorted(self._mem_intents, key=lambda item: item.get("created_at", ""), reverse=True)[:limit]
+            return [
+                RecentQueryItem(
+                    query=row.get("query", ""),
+                    session_id=row.get("session_id", ""),
+                    created_at=row.get("created_at"),
+                )
+                for row in rows
+            ]
+
+        try:
+            rows = (
+                self._client.table("intent_logs")
+                .select("query,session_id,created_at")
+                .order("created_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+            return [
+                RecentQueryItem(
+                    query=row.get("query", ""),
                     session_id=row.get("session_id", ""),
                     created_at=row.get("created_at"),
                 )
@@ -361,6 +406,69 @@ class PersistenceService:
         except Exception:
             counts = Counter(row.get("intent", "general") for row in self._mem_intents)
             return [TopIntentItem(name=name, value=value) for name, value in counts.most_common(limit)]
+
+    def get_feedback_entries(self, limit: int = 10) -> List[AdminFeedbackItem]:
+        if not self.enabled:
+            rows = sorted(self._mem_feedback, key=lambda item: item.get("created_at", ""), reverse=True)[:limit]
+            return [
+                AdminFeedbackItem(
+                    message_id=row.get("message_id", ""),
+                    rating=int(row.get("rating", 0)),
+                    comment=row.get("comment"),
+                    created_at=row.get("created_at"),
+                )
+                for row in rows
+            ]
+
+        try:
+            rows = (
+                self._client.table("feedback")
+                .select("message_id,rating,comment,created_at")
+                .order("created_at", desc=True)
+                .limit(limit)
+                .execute()
+            )
+            return [
+                AdminFeedbackItem(
+                    message_id=row.get("message_id", ""),
+                    rating=int(row.get("rating", 0)),
+                    comment=row.get("comment"),
+                    created_at=row.get("created_at"),
+                )
+                for row in (rows.data or [])
+            ]
+        except Exception:
+            rows = sorted(self._mem_feedback, key=lambda item: item.get("created_at", ""), reverse=True)[:limit]
+            return [
+                AdminFeedbackItem(
+                    message_id=row.get("message_id", ""),
+                    rating=int(row.get("rating", 0)),
+                    comment=row.get("comment"),
+                    created_at=row.get("created_at"),
+                )
+                for row in rows
+            ]
+
+    def get_flagged_reports(self, limit: int = 10) -> List[AdminReportItem]:
+        recent_queries = self.get_recent_queries(limit=50)
+        reports: list[AdminReportItem] = []
+        for index, item in enumerate(recent_queries):
+            normalized = (item.query or "").lower()
+            for keyword, reason in self._report_keywords.items():
+                if keyword in normalized:
+                    reports.append(
+                        AdminReportItem(
+                            report_id=f"report-{index}-{keyword}",
+                            session_id=item.session_id,
+                            query=item.query,
+                            created_at=item.created_at,
+                            reason=reason,
+                        )
+                    )
+                    break
+            if len(reports) >= limit:
+                break
+        return reports
 
     def persist_feedback(self, payload: FeedbackRequest) -> None:
         now = datetime.now(timezone.utc).isoformat()
