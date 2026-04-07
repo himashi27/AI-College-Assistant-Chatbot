@@ -929,6 +929,28 @@ def test_portal_announcements_endpoint_shape(monkeypatch) -> None:
     assert response.json()[0]["title"] == "Notice"
 
 
+def test_announcements_match_student_plural_audience() -> None:
+    from app.services.persistence import PersistenceService
+
+    service = PersistenceService()
+    service._enabled = False
+    service._mem_announcements = [
+        {
+            "announcement_id": "a1",
+            "title": "Exam Alert",
+            "message": "Mid sem exams start Monday.",
+            "audience": "students",
+            "created_at": "2026-04-07T08:00:00Z",
+            "status": "queued",
+        }
+    ]
+
+    items = service.get_announcements(audience="student", limit=5)
+
+    assert len(items) == 1
+    assert items[0].title == "Exam Alert"
+
+
 def test_feedback_reviews_endpoint_shape(monkeypatch) -> None:
     from app.api.routes import persistence_service
 

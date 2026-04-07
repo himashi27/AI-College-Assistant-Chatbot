@@ -67,6 +67,61 @@ class PersistenceService:
                 latency_ms=latency_ms,
                 intent=intent,
             )
+            return
+
+        try:
+            self._client.table("chat_sessions").upsert(
+                {
+                    "session_id": req.session_id,
+                    "user_id": req.user_id,
+                    "role": req.role,
+                    "language": req.language,
+                    "last_active_at": now,
+                },
+                on_conflict="session_id",
+            ).execute()
+
+            self._client.table("chat_messages").insert(
+                [
+                    {
+                        "message_id": user_message_id,
+                        "session_id": req.session_id,
+                        "role": "user",
+                        "message": req.message,
+                        "latency_ms": 0,
+                        "sources": [],
+                    },
+                    {
+                        "message_id": assistant_message_id,
+                        "session_id": req.session_id,
+                        "role": "assistant",
+                        "message": assistant_reply,
+                        "latency_ms": latency_ms,
+                        "sources": sources_payload,
+                    },
+                ]
+            ).execute()
+
+            self._client.table("intent_logs").insert(
+                {
+                    "session_id": req.session_id,
+                    "user_id": req.user_id,
+                    "intent": intent,
+                    "query": req.message,
+                    "confidence": 0.6,
+                }
+            ).execute()
+        except Exception:
+            self._persist_chat_memory(
+                req=req,
+                now=now,
+                user_message_id=user_message_id,
+                assistant_message_id=assistant_message_id,
+                assistant_reply=assistant_reply,
+                sources_payload=sources_payload,
+                latency_ms=latency_ms,
+                intent=intent,
+            )
 
     def persist_route_interaction(
         self,
@@ -607,7 +662,15 @@ class PersistenceService:
             except Exception:
                 rows = self._mem_announcements
         if audience:
-            allowed = {audience.lower(), "all"}
+            audience_key = audience.lower()
+            synonyms = {
+                "student": {"student", "students", "all"},
+                "students": {"student", "students", "all"},
+                "faculty": {"faculty", "faculties", "staff", "all"},
+                "staff": {"faculty", "faculties", "staff", "all"},
+                "all": {"all"},
+            }
+            allowed = synonyms.get(audience_key, {audience_key, "all"})
             rows = [row for row in rows if str(row.get("audience", "")).lower() in allowed]
         return [AdminAnnouncementItem(**row) for row in rows[:limit]]
 
