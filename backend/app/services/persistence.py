@@ -133,6 +133,61 @@ class PersistenceService:
                         "session_id": req.session_id,
                         "role": "assistant",
                         "message": assistant_reply,
+                        "latency_ms": latency_ms,
+                        "sources": sources_payload,
+                    },
+                ]
+            ).execute()
+
+            self._client.table("intent_logs").insert(
+                {
+                    "session_id": req.session_id,
+                    "user_id": req.user_id,
+                    "intent": intent,
+                    "query": req.message,
+                    "confidence": 0.6,
+                }
+            ).execute()
+        except Exception:
+            self._persist_chat_memory(
+                req=req,
+                now=now,
+                user_message_id=user_message_id,
+                assistant_message_id=assistant_message_id,
+                assistant_reply=assistant_reply,
+                sources_payload=sources_payload,
+                latency_ms=latency_ms,
+                intent=intent,
+            )
+            return
+
+        try:
+            self._client.table("chat_sessions").upsert(
+                {
+                    "session_id": req.session_id,
+                    "user_id": req.user_id,
+                    "role": req.role,
+                    "language": req.language,
+                    "last_active_at": now,
+                },
+                on_conflict="session_id",
+            ).execute()
+
+            self._client.table("chat_messages").insert(
+                [
+                    {
+                        "message_id": user_message_id,
+                        "session_id": req.session_id,
+                        "role": "user",
+                        "message": req.message,
+                        "latency_ms": 0,
+                        "sources": [],
+                    },
+                    {
+                        "message_id": assistant_message_id,
+                        "session_id": req.session_id,
+                        "role": "assistant",
+                        "message": assistant_reply,
                         "latency_ms": 0,
                         "sources": [],
                     },
@@ -479,6 +534,16 @@ class PersistenceService:
     def get_user_state(self, user_id: str | None) -> dict:
         if not user_id:
             return {}
+        if self.enabled:
+            try:
+                rows = self._client.table("admin_user_states").select("verified,blocked").eq("user_id", user_id).limit(1).execute()
+                row = (rows.data or [{}])[0]
+                return {
+                    "verified": bool(row.get("verified", False)),
+                    "blocked": bool(row.get("blocked", False)),
+                }
+            except Exception:
+                pass
         return dict(self._mem_user_states.get(user_id, {}))
 
     def update_user_state(self, user_id: str, *, verified: bool | None = None, blocked: bool | None = None) -> dict:
@@ -488,12 +553,25 @@ class PersistenceService:
         if blocked is not None:
             current["blocked"] = bool(blocked)
         self._mem_user_states[user_id] = current
+        if self.enabled:
+            try:
+                self._client.table("admin_user_states").upsert(
+                    {
+                        "user_id": user_id,
+                        "verified": current.get("verified", False),
+                        "blocked": current.get("blocked", False),
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                    on_conflict="user_id",
+                ).execute()
+            except Exception:
+                pass
         return dict(current)
 
     def is_user_blocked(self, user_id: str | None) -> bool:
         if not user_id:
             return False
-        return bool(self._mem_user_states.get(user_id, {}).get("blocked"))
+        return bool(self.get_user_state(user_id).get("blocked"))
 
     def create_announcement(self, *, title: str, message: str, audience: str) -> AdminAnnouncementItem:
         now = datetime.now(timezone.utc).isoformat()
@@ -508,10 +586,26 @@ class PersistenceService:
         }
         self._mem_announcements.insert(0, item)
         self._mem_announcements = self._mem_announcements[:25]
+        if self.enabled:
+            try:
+                self._client.table("admin_announcements").insert(item).execute()
+            except Exception:
+                pass
         return AdminAnnouncementItem(**item)
 
     def get_announcements(self, audience: str | None = None, limit: int = 10) -> list[AdminAnnouncementItem]:
         rows = self._mem_announcements
+        if self.enabled:
+            try:
+                rows = (
+                    self._client.table("admin_announcements")
+                    .select("announcement_id,title,message,audience,created_at,status")
+                    .order("created_at", desc=True)
+                    .limit(limit)
+                    .execute()
+                ).data or []
+            except Exception:
+                rows = self._mem_announcements
         if audience:
             allowed = {audience.lower(), "all"}
             rows = [row for row in rows if str(row.get("audience", "")).lower() in allowed]
@@ -522,12 +616,48 @@ class PersistenceService:
             "reviewed": bool(reviewed),
             "note": note or "",
         }
+        if self.enabled:
+            try:
+                self._client.table("admin_feedback_reviews").upsert(
+                    {
+                        "message_id": message_id,
+                        "reviewed": bool(reviewed),
+                        "note": note or "",
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                    on_conflict="message_id",
+                ).execute()
+            except Exception:
+                pass
         return dict(self._mem_feedback_reviews[message_id])
 
     def get_feedback_review(self, message_id: str | None) -> dict:
         if not message_id:
             return {}
+        if self.enabled:
+            try:
+                rows = self._client.table("admin_feedback_reviews").select("reviewed,note").eq("message_id", message_id).limit(1).execute()
+                row = (rows.data or [{}])[0]
+                return {
+                    "reviewed": bool(row.get("reviewed", False)),
+                    "note": row.get("note", ""),
+                }
+            except Exception:
+                pass
         return dict(self._mem_feedback_reviews.get(message_id, {}))
 
     def get_feedback_reviews(self, message_ids: list[str]) -> dict[str, dict]:
+        if self.enabled and message_ids:
+            try:
+                rows = self._client.table("admin_feedback_reviews").select("message_id,reviewed,note").in_("message_id", message_ids).execute()
+                return {
+                    row.get("message_id"): {
+                        "reviewed": bool(row.get("reviewed", False)),
+                        "note": row.get("note", ""),
+                    }
+                    for row in (rows.data or [])
+                    if row.get("message_id")
+                }
+            except Exception:
+                pass
         return {message_id: dict(self._mem_feedback_reviews.get(message_id, {})) for message_id in message_ids if message_id}

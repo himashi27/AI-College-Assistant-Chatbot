@@ -44,6 +44,32 @@ create table if not exists feedback (
 create index if not exists idx_feedback_message_id on feedback(message_id);
 create index if not exists idx_feedback_created_at on feedback(created_at desc);
 
+create table if not exists admin_user_states (
+  user_id text primary key,
+  verified boolean not null default false,
+  blocked boolean not null default false,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists admin_announcements (
+  announcement_id text primary key,
+  title text not null,
+  message text not null,
+  audience text not null default 'students',
+  status text not null default 'queued',
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_admin_announcements_created_at on admin_announcements(created_at desc);
+create index if not exists idx_admin_announcements_audience on admin_announcements(audience);
+
+create table if not exists admin_feedback_reviews (
+  message_id text primary key,
+  reviewed boolean not null default false,
+  note text,
+  updated_at timestamptz not null default now()
+);
+
 -- Academic domain tables for deterministic routing.
 create table if not exists subjects (
   id uuid primary key default gen_random_uuid(),
