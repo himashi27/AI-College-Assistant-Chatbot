@@ -64,6 +64,51 @@ def test_portal_login_rejects_blocked_user(monkeypatch) -> None:
     assert "blocked" in response.json()["detail"].lower()
 
 
+def test_request_otp_student_success() -> None:
+    response = client.post(
+        "/api/auth/request-otp",
+        json={"email": "rahul@krmangalam.edu.in", "persona": "student"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "otp_sent"
+    assert len(payload["otp_code"]) == 6
+
+
+def test_verify_otp_student_success() -> None:
+    otp_response = client.post(
+        "/api/auth/request-otp",
+        json={"email": "rahul@krmangalam.edu.in", "persona": "student"},
+    )
+    otp_code = otp_response.json()["otp_code"]
+
+    response = client.post(
+        "/api/auth/verify-otp",
+        json={"email": "rahul@krmangalam.edu.in", "persona": "student", "otp": otp_code},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["persona"] == "student"
+    assert payload["user_id"] == "AI23001"
+
+
+def test_verify_otp_rejects_invalid_code() -> None:
+    client.post(
+        "/api/auth/request-otp",
+        json={"email": "rahul@krmangalam.edu.in", "persona": "student"},
+    )
+
+    response = client.post(
+        "/api/auth/verify-otp",
+        json={"email": "rahul@krmangalam.edu.in", "persona": "student", "otp": "000000"},
+    )
+
+    assert response.status_code == 401
+    assert "invalid otp" in response.json()["detail"].lower()
+
+
 def test_chat_returns_fallback_when_llm_unavailable(monkeypatch) -> None:
     from app.api.routes import chat_service
 

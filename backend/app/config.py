@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     admin_emails: str = ""
     chat_rate_limit_per_minute: int = 30
     portal_config_path: str = "data/portal_config.json"
+    otp_expiry_seconds: int = 300
+    otp_demo_mode: bool = True
 
     llm_provider: str = "auto"
     groq_api_key: str = ""

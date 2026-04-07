@@ -1980,6 +1980,11 @@ const PersonaLoginPage = () => {
   const { persona = 'student' } = useParams()
   const normalizedPersona = persona === 'staff' ? 'staff' : 'student'
   const [email, setEmail] = useState('')
+  const [otp, setOtp] = useState('')
+  const [otpRequested, setOtpRequested] = useState(false)
+  const [otpHint, setOtpHint] = useState('')
+  const [statusText, setStatusText] = useState('')
+  const [copyStatus, setCopyStatus] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -1988,12 +1993,25 @@ const PersonaLoginPage = () => {
     return <Navigate to="/" replace />
   }
 
-  const handleSubmit = async (event) => {
+  const handleCopyOtp = async () => {
+    if (!otpHint) return
+    try {
+      await navigator.clipboard.writeText(otpHint)
+      setCopyStatus('OTP copied')
+      window.setTimeout(() => setCopyStatus(''), 1800)
+    } catch {
+      setCopyStatus('Copy failed')
+      window.setTimeout(() => setCopyStatus(''), 1800)
+    }
+  }
+
+  const handleRequestOtp = async (event) => {
     event.preventDefault()
     setLoading(true)
     setError('')
+    setStatusText('')
     try {
-      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+      const response = await fetch(`${API_BASE_URL}/api/auth/request-otp`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -2005,7 +2023,51 @@ const PersonaLoginPage = () => {
       })
 
       if (!response.ok) {
-        let detail = 'This Outlook ID is not mapped yet for the selected login type.'
+        let detail = 'We could not send an OTP for this Outlook ID.'
+        try {
+          const payload = await response.json()
+          if (payload?.detail) {
+            detail = payload.detail
+          }
+        } catch {
+          // keep default error
+        }
+        throw new Error(detail)
+      }
+
+      const payload = await response.json()
+      setOtpRequested(true)
+      setOtp('')
+      setOtpHint(payload.otp_code || '')
+      setStatusText(payload.detail || 'OTP sent successfully.')
+      setCopyStatus('')
+    } catch (err) {
+      setError(err?.message || 'We could not send an OTP for this Outlook ID.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleVerifyOtp = async (event) => {
+    event.preventDefault()
+    setLoading(true)
+    setError('')
+    setStatusText('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/verify-otp`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: email.trim(),
+          persona: normalizedPersona,
+          otp: otp.trim(),
+        }),
+      })
+
+      if (!response.ok) {
+        let detail = 'We could not verify this OTP.'
         try {
           const payload = await response.json()
           if (payload?.detail) {
@@ -2035,7 +2097,7 @@ const PersonaLoginPage = () => {
 
       navigate('/', { replace: true })
     } catch (err) {
-      setError(err?.message || 'This Outlook ID is not mapped yet for the selected login type.')
+      setError(err?.message || 'We could not verify this OTP.')
     } finally {
       setLoading(false)
     }
@@ -2060,11 +2122,11 @@ const PersonaLoginPage = () => {
             </p>
             <h1 className="mt-3 font-outfit text-3xl font-semibold text-slate-800">Enter your Outlook ID</h1>
             <p className="mt-3 text-sm text-slate-500">
-              We will use your college email to identify the correct portal profile and open your dashboard.
+              We will first verify your college Outlook ID with an OTP, then open the correct portal profile.
             </p>
           </div>
 
-          <form onSubmit={handleSubmit} className="mt-8 space-y-5">
+          <form onSubmit={otpRequested ? handleVerifyOtp : handleRequestOtp} className="mt-8 space-y-5">
             <div>
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">Official Email</label>
               <input
@@ -2074,19 +2136,74 @@ const PersonaLoginPage = () => {
                 placeholder={normalizedPersona === 'staff' ? 'name@krmangalam.edu.in' : 'student@krmangalam.edu.in'}
                 className="mt-2 w-full rounded-2xl border border-[#dbe7fb] bg-[#fbfdff] px-4 py-4 text-sm text-slate-700 outline-none transition focus:border-[#4f8fe9]"
                 autoComplete="email"
+                disabled={otpRequested}
                 required
               />
             </div>
 
-            {error && <p className="text-sm text-rose-500">{error}</p>}
+            {otpRequested && (
+              <div className="space-y-2">
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">OTP</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={otp}
+                  onChange={(event) => setOtp(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="Enter 6-digit OTP"
+                  className="mt-2 w-full rounded-2xl border border-[#dbe7fb] bg-[#fbfdff] px-4 py-4 text-sm tracking-[0.35em] text-slate-700 outline-none transition focus:border-[#4f8fe9]"
+                  autoComplete="one-time-code"
+                    required
+                />
+                {otpHint && (
+                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                    <p className="font-semibold">Prototype Test OTP</p>
+                    <p className="mt-1 text-xs text-emerald-700/90">
+                      This MVP shows the OTP on screen for testing. In the final portal, this will be delivered to the official Outlook ID.
+                    </p>
+                    <div className="mt-3 flex items-center justify-between gap-3">
+                      <span className="rounded-xl bg-white px-3 py-2 font-semibold tracking-[0.35em] text-emerald-800">
+                        {otpHint}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleCopyOtp}
+                        className="rounded-xl border border-emerald-300 bg-white px-3 py-2 text-xs font-semibold text-emerald-700"
+                      >
+                        {copyStatus || 'Copy OTP'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full rounded-2xl bg-[linear-gradient(135deg,#4f8fe9,#6f7ef4)] px-4 py-4 text-sm font-semibold text-white shadow-lg disabled:opacity-70"
-            >
-              {loading ? 'Checking account...' : 'Continue to Portal'}
-            </button>
+            {error && <p className="text-sm text-rose-500">{error}</p>}
+            {statusText && <p className="text-sm text-emerald-600">{statusText}</p>}
+
+            <div className="space-y-3">
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full rounded-2xl bg-[linear-gradient(135deg,#4f8fe9,#6f7ef4)] px-4 py-4 text-sm font-semibold text-white shadow-lg disabled:opacity-70"
+              >
+                {loading ? (otpRequested ? 'Verifying OTP...' : 'Sending OTP...') : otpRequested ? 'Verify OTP' : 'Send OTP'}
+              </button>
+              {otpRequested && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOtpRequested(false)
+                    setOtp('')
+                    setOtpHint('')
+                    setStatusText('')
+                    setError('')
+                  }}
+                  className="w-full rounded-2xl border border-[#dbe7fb] bg-white px-4 py-4 text-sm font-semibold text-slate-600"
+                >
+                  Change Outlook ID
+                </button>
+              )}
+            </div>
           </form>
         </div>
       </div>

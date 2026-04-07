@@ -151,6 +151,24 @@ class PortalLoginResponse(BaseModel):
     display_name: str
 
 
+class OTPRequestPayload(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+    persona: str = Field(..., min_length=3, max_length=32)
+
+
+class OTPRequestResponse(BaseModel):
+    status: str
+    expires_in: int
+    detail: str
+    otp_code: Optional[str] = None
+
+
+class OTPVerifyPayload(BaseModel):
+    email: str = Field(..., min_length=3, max_length=255)
+    persona: str = Field(..., min_length=3, max_length=32)
+    otp: str = Field(..., min_length=4, max_length=8)
+
+
 class QueryRouteRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=2000)
     session_id: Optional[str] = Field(default=None, max_length=128)

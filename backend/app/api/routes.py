@@ -24,6 +24,9 @@ from app.schemas import (
     PersonasResponse,
     PortalLoginRequest,
     PortalLoginResponse,
+    OTPRequestPayload,
+    OTPRequestResponse,
+    OTPVerifyPayload,
     PortalAccessResponse,
     PortalSectionResponse,
     QuickActionsResponse,
@@ -42,6 +45,7 @@ from app.services.query_router import QueryRouterService
 from app.services.identity_service import IdentityService
 from app.services.admin_service import AdminService
 from app.services.student_context_service import StudentContextService
+from app.services.otp_service import OTPService
 
 router = APIRouter()
 chat_service = ChatService()
@@ -53,6 +57,7 @@ portal_data_service = PortalDataService()
 student_context_service = StudentContextService()
 identity_service = IdentityService()
 admin_service = AdminService()
+otp_service = OTPService()
 
 
 def _route_ack_text(route_result: QueryRouteResponse) -> str:
@@ -94,6 +99,18 @@ async def portal_login(payload: PortalLoginRequest) -> PortalLoginResponse:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This portal account has been blocked by admin.",
         )
+    return PortalLoginResponse(**resolved)
+
+
+@router.post("/auth/request-otp", response_model=OTPRequestResponse)
+async def request_portal_otp(payload: OTPRequestPayload) -> OTPRequestResponse:
+    result = otp_service.request_otp(email=payload.email, persona=payload.persona)
+    return OTPRequestResponse(**result)
+
+
+@router.post("/auth/verify-otp", response_model=PortalLoginResponse)
+async def verify_portal_otp(payload: OTPVerifyPayload) -> PortalLoginResponse:
+    resolved = otp_service.verify_otp(email=payload.email, persona=payload.persona, otp=payload.otp)
     return PortalLoginResponse(**resolved)
 
 
