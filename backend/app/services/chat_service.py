@@ -24,6 +24,7 @@ class ChatService:
         start = time.perf_counter()
         persona = (req.role or "student").strip().lower()
         sources = self.retrieval.find_sources(req.message, persona=persona)
+        announcement_reply = self._announcement_reply(req.message, persona)
         student_reply = self.student_chat.generate_reply(user_id=req.user_id, message=req.message) if persona == "student" else None
         faculty_reply = self.faculty_chat.generate_reply(user_id=req.user_id, message=req.message) if persona == "faculty" else None
 
@@ -38,9 +39,11 @@ class ChatService:
             f"Context:\n{context if context else 'No matching local context found.'}"
         )
 
-        llm_reply = None if student_reply or faculty_reply else await self.groq.generate_reply(prompt)
+        llm_reply = None if announcement_reply or student_reply or faculty_reply else await self.groq.generate_reply(prompt)
 
-        if student_reply:
+        if announcement_reply:
+            reply = announcement_reply
+        elif student_reply:
             reply = student_reply
         elif faculty_reply:
             reply = faculty_reply
@@ -69,6 +72,22 @@ class ChatService:
             session_id=req.session_id,
             message_id=message_id,
         )
+
+    def _announcement_reply(self, message: str, persona: str) -> str | None:
+        normalized = (message or "").strip().lower()
+        announcement_terms = ("announcement", "announcements", "notification", "notifications", "notice", "notices", "latest update", "new update")
+        if not any(term in normalized for term in announcement_terms):
+            return None
+
+        audience = "faculty" if persona == "faculty" else "student"
+        announcements = self.persistence.get_announcements(audience=audience, limit=3)
+        if not announcements:
+            return "There are no new announcements right now."
+
+        lines = ["Latest announcements:"]
+        for item in announcements:
+            lines.append(f"- {item.title}: {item.message}")
+        return "\n".join(lines)
 
     def _fallback_reply(self, persona: str) -> str:
         if persona == "faculty":

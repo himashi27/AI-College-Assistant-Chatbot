@@ -135,6 +135,22 @@ const saveStoredChatThreads = (threads) => {
   localStorage.setItem(CHAT_THREADS_KEY, JSON.stringify(threads))
 }
 
+const getSeenAnnouncementIds = (ownerKey) => {
+  if (!ownerKey) return []
+  try {
+    const raw = localStorage.getItem(`seen_announcements:${ownerKey}`)
+    const parsed = raw ? JSON.parse(raw) : []
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+const saveSeenAnnouncementIds = (ownerKey, ids) => {
+  if (!ownerKey) return
+  localStorage.setItem(`seen_announcements:${ownerKey}`, JSON.stringify(ids))
+}
+
 const upsertChatThread = (thread) => {
   const threads = getStoredChatThreads().filter((item) => item?.threadKey !== thread.threadKey)
   threads.push(thread)
@@ -2581,6 +2597,7 @@ const StudentShell = ({ children }) => {
   const auth = getStoredPortalAuth()
   const [chatOpen, setChatOpen] = useState(false)
   const [accessBlocked, setAccessBlocked] = useState('')
+  const [announcementPopup, setAnnouncementPopup] = useState(null)
 
   useEffect(() => {
     document.body.style.overflow = chatOpen ? 'hidden' : ''
@@ -2610,6 +2627,35 @@ const StudentShell = ({ children }) => {
     }
   }, [auth?.userId])
 
+  useEffect(() => {
+    let active = true
+    const loadAnnouncementPopup = async () => {
+      if (!auth?.userId || !auth?.persona) return
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/portal/announcements?role=${encodeURIComponent(auth.persona)}`, {
+          headers: {
+            'X-Student-Id': auth.userId,
+          },
+        })
+        if (!response.ok) return
+        const payload = await response.json()
+        if (!active || !Array.isArray(payload) || payload.length === 0) return
+        const ownerKey = `${auth.persona}:${auth.userId}`
+        const seenIds = getSeenAnnouncementIds(ownerKey)
+        const newest = payload.find((item) => item?.announcement_id && !seenIds.includes(item.announcement_id))
+        if (newest) {
+          setAnnouncementPopup(newest)
+        }
+      } catch {
+        // ignore popup fetch failure
+      }
+    }
+    loadAnnouncementPopup()
+    return () => {
+      active = false
+    }
+  }, [auth?.persona, auth?.userId])
+
   if (!auth?.userId) {
     return <Navigate to="/login" replace />
   }
@@ -2617,6 +2663,17 @@ const StudentShell = ({ children }) => {
   const handleLogout = () => {
     clearPortalSession()
     window.location.href = '/login'
+  }
+
+  const dismissAnnouncementPopup = () => {
+    if (announcementPopup?.announcement_id && auth?.userId && auth?.persona) {
+      const ownerKey = `${auth.persona}:${auth.userId}`
+      const seenIds = getSeenAnnouncementIds(ownerKey)
+      if (!seenIds.includes(announcementPopup.announcement_id)) {
+        saveSeenAnnouncementIds(ownerKey, [announcementPopup.announcement_id, ...seenIds].slice(0, 20))
+      }
+    }
+    setAnnouncementPopup(null)
   }
 
   if (accessBlocked) {
@@ -2675,6 +2732,25 @@ const StudentShell = ({ children }) => {
             <div className="pointer-events-auto flex h-[92vh] min-h-0 w-[92vw] max-w-[440px] flex-col">
             <ChatbotPanel />
             </div>
+          </div>
+        </div>
+      )}
+
+      {announcementPopup && (
+        <div className="fixed bottom-6 left-1/2 z-40 w-[92vw] max-w-md -translate-x-1/2 rounded-3xl border border-[#ead9b4] bg-[#fff6df] p-5 shadow-2xl">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.25em] text-amber-700">New Announcement</p>
+              <h3 className="mt-2 text-lg font-semibold text-slate-800">{announcementPopup.title}</h3>
+              <p className="mt-2 text-sm text-slate-700">{announcementPopup.message}</p>
+            </div>
+            <button
+              type="button"
+              onClick={dismissAnnouncementPopup}
+              className="rounded-full border border-[#ead9b4] bg-white px-3 py-1 text-xs font-semibold text-slate-600"
+            >
+              Dismiss
+            </button>
           </div>
         </div>
       )}

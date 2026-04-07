@@ -268,6 +268,42 @@ def test_chat_faculty_fallback_is_persona_specific(monkeypatch) -> None:
     assert "staff request" in payload["reply"].lower()
 
 
+def test_chat_returns_latest_announcements_for_students(monkeypatch) -> None:
+    from app.api.routes import chat_service
+    from app.schemas import AdminAnnouncementItem
+
+    monkeypatch.setattr(
+        chat_service.persistence,
+        "get_announcements",
+        lambda audience=None, limit=3: [
+            AdminAnnouncementItem(
+                announcement_id="a1",
+                title="Exam Alert",
+                message="Mid sem exams begin on Monday.",
+                audience=audience or "student",
+                created_at=None,
+                status="queued",
+            )
+        ],
+    )
+
+    response = client.post(
+        "/api/chat",
+        json={
+            "session_id": "session-announcements",
+            "user_id": "AI23001",
+            "message": "any new announcements?",
+            "role": "student",
+            "language": "en",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "latest announcements" in payload["reply"].lower()
+    assert "Exam Alert" in payload["reply"]
+
+
 def test_chat_faculty_first_class_follow_up(monkeypatch) -> None:
     from app.api.routes import chat_service
 
