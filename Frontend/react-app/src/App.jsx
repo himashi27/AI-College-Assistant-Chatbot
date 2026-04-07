@@ -358,9 +358,6 @@ const systemStatus = [
   { name: 'Notifications', status: 'Operational' },
 ]
 
-const ADMIN_USER_STATE_STORAGE_KEY = 'admin_user_state'
-const ADMIN_ANNOUNCEMENTS_STORAGE_KEY = 'admin_announcements'
-const ADMIN_FEEDBACK_REVIEW_STORAGE_KEY = 'admin_feedback_reviews'
 const ADMIN_REPORT_STATUS_STORAGE_KEY = 'admin_report_statuses'
 
 const getStoredJson = (storageKey, fallbackValue) => {
@@ -503,9 +500,7 @@ const AdminDashboard = ({ adminToken, onUnauthorized }) => {
   const [adminUsers, setAdminUsers] = useState([])
   const [flaggedReports, setFlaggedReports] = useState([])
   const [feedbackEntries, setFeedbackEntries] = useState([])
-  const [userState, setUserState] = useState(() => getStoredJson(ADMIN_USER_STATE_STORAGE_KEY, {}))
-  const [announcements, setAnnouncements] = useState(() => getStoredJson(ADMIN_ANNOUNCEMENTS_STORAGE_KEY, []))
-  const [feedbackReviews, setFeedbackReviews] = useState(() => getStoredJson(ADMIN_FEEDBACK_REVIEW_STORAGE_KEY, {}))
+  const [announcements, setAnnouncements] = useState([])
   const [reportStatuses, setReportStatuses] = useState(() => getStoredJson(ADMIN_REPORT_STATUS_STORAGE_KEY, {}))
   const [announcementDraft, setAnnouncementDraft] = useState({
     title: '',
@@ -515,18 +510,6 @@ const AdminDashboard = ({ adminToken, onUnauthorized }) => {
   const [announcementStatus, setAnnouncementStatus] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-
-  useEffect(() => {
-    saveStoredJson(ADMIN_USER_STATE_STORAGE_KEY, userState)
-  }, [userState])
-
-  useEffect(() => {
-    saveStoredJson(ADMIN_ANNOUNCEMENTS_STORAGE_KEY, announcements)
-  }, [announcements])
-
-  useEffect(() => {
-    saveStoredJson(ADMIN_FEEDBACK_REVIEW_STORAGE_KEY, feedbackReviews)
-  }, [feedbackReviews])
 
   useEffect(() => {
     saveStoredJson(ADMIN_REPORT_STATUS_STORAGE_KEY, reportStatuses)
@@ -541,13 +524,14 @@ const AdminDashboard = ({ adminToken, onUnauthorized }) => {
       }
       try {
         const headers = adminToken ? { Authorization: `Bearer ${adminToken}` } : {}
-        const [statsRes, recentRes, intentsRes, usersRes, reportsRes, feedbackRes] = await Promise.all([
+        const [statsRes, recentRes, intentsRes, usersRes, reportsRes, feedbackRes, announcementsRes] = await Promise.all([
           fetch(`${API_BASE_URL}/api/admin/stats`, { headers }),
           fetch(`${API_BASE_URL}/api/admin/recent-queries`, { headers }),
           fetch(`${API_BASE_URL}/api/admin/top-intents`, { headers }),
           fetch(`${API_BASE_URL}/api/admin/users`, { headers }),
           fetch(`${API_BASE_URL}/api/admin/reports`, { headers }),
           fetch(`${API_BASE_URL}/api/admin/feedback`, { headers }),
+          fetch(`${API_BASE_URL}/api/admin/announcements`, { headers }),
         ])
 
         if (
@@ -556,7 +540,8 @@ const AdminDashboard = ({ adminToken, onUnauthorized }) => {
           intentsRes.status === 401 ||
           usersRes.status === 401 ||
           reportsRes.status === 401 ||
-          feedbackRes.status === 401
+          feedbackRes.status === 401 ||
+          announcementsRes.status === 401
         ) {
           if (onUnauthorized) {
             onUnauthorized()
@@ -564,17 +549,18 @@ const AdminDashboard = ({ adminToken, onUnauthorized }) => {
           return
         }
 
-        if (!statsRes.ok || !recentRes.ok || !intentsRes.ok || !usersRes.ok || !reportsRes.ok || !feedbackRes.ok) {
+        if (!statsRes.ok || !recentRes.ok || !intentsRes.ok || !usersRes.ok || !reportsRes.ok || !feedbackRes.ok || !announcementsRes.ok) {
           throw new Error('Failed to load admin analytics')
         }
 
-        const [statsPayload, recentPayload, intentsPayload, usersPayload, reportsPayload, feedbackPayload] = await Promise.all([
+        const [statsPayload, recentPayload, intentsPayload, usersPayload, reportsPayload, feedbackPayload, announcementsPayload] = await Promise.all([
           statsRes.json(),
           recentRes.json(),
           intentsRes.json(),
           usersRes.json(),
           reportsRes.json(),
           feedbackRes.json(),
+          announcementsRes.json(),
         ])
 
         if (!mounted) return
@@ -585,6 +571,7 @@ const AdminDashboard = ({ adminToken, onUnauthorized }) => {
         setAdminUsers(Array.isArray(usersPayload) ? usersPayload : [])
         setFlaggedReports(Array.isArray(reportsPayload) ? reportsPayload : [])
         setFeedbackEntries(Array.isArray(feedbackPayload) ? feedbackPayload : [])
+        setAnnouncements(Array.isArray(announcementsPayload) ? announcementsPayload : [])
       } catch {
         if (!mounted) return
         setError('Unable to load live admin controls right now.')
@@ -615,7 +602,7 @@ const AdminDashboard = ({ adminToken, onUnauthorized }) => {
 
   const maxIntentValue = Math.max(1, ...topIntents.map((intent) => intent.value || 0))
   const visibleReports = flaggedReports.filter((item) => reportStatuses[item.report_id] !== 'resolved')
-  const activeAnnouncements = announcements.slice().sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+  const activeAnnouncements = announcements.slice().sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
   const mergedFeedbackEntries =
     feedbackEntries.length > 0
       ? feedbackEntries
@@ -626,28 +613,59 @@ const AdminDashboard = ({ adminToken, onUnauthorized }) => {
           created_at: null,
         }))
 
-  const setUserFlag = (userId, updates) => {
-    setUserState((current) => ({
-      ...current,
-      [userId]: {
-        ...(current[userId] || {}),
-        ...updates,
-      },
-    }))
+  const setUserFlag = async (userId, updates) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/users/${encodeURIComponent(userId)}/state`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify(updates),
+      })
+      if (response.status === 401) {
+        if (onUnauthorized) onUnauthorized()
+        return
+      }
+      if (!response.ok) {
+        throw new Error('User update failed')
+      }
+      const payload = await response.json()
+      setAdminUsers((current) => current.map((item) => (item.user_id === userId ? payload : item)))
+    } catch {
+      setError('Could not update the selected portal user right now.')
+    }
   }
 
   const markReportResolved = (reportId) => {
     setReportStatuses((current) => ({ ...current, [reportId]: 'resolved' }))
   }
 
-  const saveFeedbackReview = (messageId, updates) => {
-    setFeedbackReviews((current) => ({
-      ...current,
-      [messageId]: {
-        ...(current[messageId] || {}),
-        ...updates,
-      },
-    }))
+  const saveFeedbackReview = async (messageId, updates) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/admin/feedback/${encodeURIComponent(messageId)}/review`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminToken}`,
+        },
+        body: JSON.stringify({
+          reviewed: Boolean(updates.reviewed),
+          note: updates.note || '',
+        }),
+      })
+      if (response.status === 401) {
+        if (onUnauthorized) onUnauthorized()
+        return
+      }
+      if (!response.ok) {
+        throw new Error('Feedback review save failed')
+      }
+      const payload = await response.json()
+      setFeedbackEntries((current) => current.map((item) => (item.message_id === messageId ? payload : item)))
+    } catch {
+      setError('Could not save the feedback review right now.')
+    }
   }
 
   const publishAnnouncement = async () => {
@@ -680,9 +698,11 @@ const AdminDashboard = ({ adminToken, onUnauthorized }) => {
       const payload = await response.json()
       setAnnouncements((current) => [
         {
-          id: payload.announcement_id,
-          ...announcementDraft,
-          createdAt: new Date().toISOString(),
+          announcement_id: payload.announcement_id,
+          title: announcementDraft.title,
+          message: announcementDraft.message,
+          audience: announcementDraft.audience,
+          created_at: new Date().toISOString(),
           status: payload.status,
         },
         ...current,
@@ -833,9 +853,9 @@ const AdminDashboard = ({ adminToken, onUnauthorized }) => {
         <div className="rounded-2xl border border-[#e5edf8] bg-white p-5 shadow-sm">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h3 className="text-lg font-semibold text-slate-800">Student Accounts & Verification</h3>
+              <h3 className="text-lg font-semibold text-slate-800">User Accounts & Verification</h3>
               <p className="mt-1 text-sm text-slate-500">
-                Manage student accounts, verify users, and keep access safe.
+                Manage student and staff accounts, verify users, and keep access safe.
               </p>
             </div>
             <span className="rounded-full bg-[#f1f6ff] px-3 py-1 text-xs font-semibold text-[#1f4ea7]">
@@ -844,9 +864,8 @@ const AdminDashboard = ({ adminToken, onUnauthorized }) => {
           </div>
           <div className="mt-5 space-y-3">
             {adminUsers.slice(0, 8).map((user) => {
-              const state = userState[user.user_id] || {}
-              const isVerified = state.verified ?? user.persona === 'faculty'
-              const isBlocked = Boolean(state.blocked)
+              const isVerified = Boolean(user.verified)
+              const isBlocked = Boolean(user.blocked)
               return (
                 <div key={user.user_id} className="rounded-2xl border border-[#eef2f8] bg-[#fcfdff] p-4">
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -937,7 +956,7 @@ const AdminDashboard = ({ adminToken, onUnauthorized }) => {
             <div>
               <h3 className="text-lg font-semibold text-slate-800">Announcements & Alerts</h3>
               <p className="mt-1 text-sm text-slate-500">
-                Send important announcements or alerts to students through the chatbot workflow.
+                Send important announcements or alerts to portal users through the chatbot workflow.
               </p>
             </div>
             <span className="rounded-full bg-[#eef6ff] px-3 py-1 text-xs font-semibold text-royal">
@@ -1002,7 +1021,7 @@ const AdminDashboard = ({ adminToken, onUnauthorized }) => {
                   </div>
                   <p className="mt-2 text-sm text-slate-600">{item.message}</p>
                   <p className="mt-2 text-xs text-slate-400">
-                    {item.createdAt ? new Date(item.createdAt).toLocaleString() : 'Queued'} • {item.status || 'queued'}
+                    {item.created_at ? new Date(item.created_at).toLocaleString() : 'Queued'} • {item.status || 'queued'}
                   </p>
                 </div>
               ))
@@ -1025,7 +1044,6 @@ const AdminDashboard = ({ adminToken, onUnauthorized }) => {
         </div>
         <div className="mt-5 grid gap-4 lg:grid-cols-2">
           {mergedFeedbackEntries.map((item) => {
-            const review = feedbackReviews[item.message_id] || {}
             return (
               <div key={item.message_id} className="rounded-2xl border border-[#eef2f8] bg-[#fcfdff] p-4">
                 <div className="flex items-center justify-between gap-3">
@@ -1036,8 +1054,14 @@ const AdminDashboard = ({ adminToken, onUnauthorized }) => {
                 </div>
                 <p className="mt-3 text-sm text-slate-600">{item.comment || 'No written feedback provided.'}</p>
                 <textarea
-                  value={review.note || ''}
-                  onChange={(event) => saveFeedbackReview(item.message_id, { note: event.target.value })}
+                  value={item.review_note || ''}
+                  onChange={(event) =>
+                    setFeedbackEntries((current) =>
+                      current.map((entry) =>
+                        entry.message_id === item.message_id ? { ...entry, review_note: event.target.value } : entry
+                      )
+                    )
+                  }
                   placeholder="Admin update note: corrected topic, refreshed dataset, or reviewed response."
                   rows={3}
                   className="mt-4 w-full rounded-2xl border border-[#dbe4f4] px-4 py-3 text-sm outline-none focus:border-royal"
@@ -1045,12 +1069,12 @@ const AdminDashboard = ({ adminToken, onUnauthorized }) => {
                 <div className="mt-3 flex flex-wrap items-center gap-3">
                   <button
                     type="button"
-                    onClick={() => saveFeedbackReview(item.message_id, { reviewed: !review.reviewed })}
+                    onClick={() => saveFeedbackReview(item.message_id, { reviewed: !item.reviewed, note: item.review_note || '' })}
                     className="rounded-xl bg-emerald-700 px-3 py-2 text-xs font-semibold text-white"
                   >
-                    {review.reviewed ? 'Reviewed' : 'Mark Reviewed'}
+                    {item.reviewed ? 'Reviewed' : 'Mark Reviewed'}
                   </button>
-                  {review.reviewed && (
+                  {item.reviewed && (
                     <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-600">
                       Content update tracked
                     </span>
@@ -1075,6 +1099,8 @@ const ChatbotPanel = () => {
   const [input, setInput] = useState('')
   const [isSending, setIsSending] = useState(false)
   const [feedbackStatus, setFeedbackStatus] = useState({})
+  const [reviewStatuses, setReviewStatuses] = useState({})
+  const [userAnnouncements, setUserAnnouncements] = useState([])
   const [quickActions, setQuickActions] = useState(defaultQuickActionsByPersona[initialPersona] || defaultQuickActions)
   const [chatHydrated, setChatHydrated] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -1234,6 +1260,62 @@ const ChatbotPanel = () => {
     }
   }, [selectedPersona])
 
+  useEffect(() => {
+    let active = true
+    const loadAnnouncements = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/portal/announcements?role=${encodeURIComponent(selectedPersona)}`, {
+          headers: {
+            'X-Student-Id': studentIdRef.current,
+          },
+        })
+        if (!response.ok) return
+        const payload = await response.json()
+        if (active) {
+          setUserAnnouncements(Array.isArray(payload) ? payload : [])
+        }
+      } catch {
+        // keep announcements empty
+      }
+    }
+    loadAnnouncements()
+    return () => {
+      active = false
+    }
+  }, [selectedPersona])
+
+  useEffect(() => {
+    const messageIds = messages
+      .filter((item) => item?.role === 'bot' && item?.messageId)
+      .map((item) => item.messageId)
+    if (messageIds.length === 0) {
+      setReviewStatuses({})
+      return
+    }
+
+    let active = true
+    const loadReviewStatuses = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/feedback/reviews?message_ids=${encodeURIComponent(messageIds.join(','))}`, {
+          headers: {
+            'X-Student-Id': studentIdRef.current,
+          },
+        })
+        if (!response.ok) return
+        const payload = await response.json()
+        if (active && payload && typeof payload === 'object') {
+          setReviewStatuses(payload)
+        }
+      } catch {
+        // keep review statuses empty
+      }
+    }
+    loadReviewStatuses()
+    return () => {
+      active = false
+    }
+  }, [messages])
+
   const formatAssignmentSummary = (payload) => {
     if (!payload || !Array.isArray(payload.assignments) || payload.assignments.length === 0) {
       return 'No open due assignments found right now.'
@@ -1350,7 +1432,16 @@ const ChatbotPanel = () => {
       })
 
       if (!routeRes.ok) {
-        throw new Error('Route request failed')
+        let detail = 'Route request failed'
+        try {
+          const payload = await routeRes.json()
+          if (payload?.detail) {
+            detail = payload.detail
+          }
+        } catch {
+          // keep fallback detail
+        }
+        throw new Error(detail)
       }
 
       const routePayload = await routeRes.json()
@@ -1452,7 +1543,16 @@ const ChatbotPanel = () => {
       })
 
       if (!chatRes.ok) {
-        throw new Error('Chat request failed')
+        let detail = 'Chat request failed'
+        try {
+          const payload = await chatRes.json()
+          if (payload?.detail) {
+            detail = payload.detail
+          }
+        } catch {
+          // keep fallback detail
+        }
+        throw new Error(detail)
       }
 
       const payload = await chatRes.json()
@@ -1465,14 +1565,14 @@ const ChatbotPanel = () => {
           text: safeBotText(payload.reply || 'I could not generate a response right now.'),
         },
       ])
-    } catch {
+    } catch (err) {
       setMessages((prev) => [
         ...prev,
         {
           id: Date.now() + 1,
           messageId: null,
           role: 'bot',
-          text: safeBotText('I am having trouble reaching the server right now. Please try again in a moment.'),
+          text: safeBotText(err?.message || 'I am having trouble reaching the server right now. Please try again in a moment.'),
         },
       ])
     } finally {
@@ -1630,6 +1730,16 @@ const ChatbotPanel = () => {
           style={{ overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch' }}
         >
           <div className="space-y-5">
+            {userAnnouncements.length > 0 && (
+              <div className="space-y-2">
+                {userAnnouncements.slice(0, 2).map((item) => (
+                  <div key={item.announcement_id} className="rounded-2xl border border-[#ead9b4] bg-[#fff6df] px-4 py-3 text-sm text-slate-700 shadow-sm">
+                    <p className="font-semibold text-slate-800">{item.title}</p>
+                    <p className="mt-1">{item.message}</p>
+                  </div>
+                ))}
+              </div>
+            )}
             {isViewingHistory && (
               <div className="rounded-2xl border border-[#e9decc] bg-white px-4 py-3 text-xs font-semibold text-slate-600 shadow-sm">
                 You are viewing an older conversation. Return to Today to continue chatting.
@@ -1682,6 +1792,14 @@ const ChatbotPanel = () => {
                       </button>
                       {feedbackStatus[message.messageId] === 'done' && <span className="text-emerald-600">Feedback saved</span>}
                       {feedbackStatus[message.messageId] === 'error' && <span className="text-rose-600">Try again</span>}
+                    </div>
+                  )}
+                  {message.role === 'bot' && message.messageId && reviewStatuses[message.messageId]?.reviewed && (
+                    <div className="mt-2 rounded-2xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+                      <p className="font-semibold">Admin reviewed this response.</p>
+                      {reviewStatuses[message.messageId]?.note && (
+                        <p className="mt-1 text-emerald-700/90">{reviewStatuses[message.messageId].note}</p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1976,20 +2094,62 @@ const PersonaLoginPage = () => {
   )
 }
 
-const HomePage = () => (
-  <div className="grid grid-cols-2 gap-x-5 gap-y-7 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-    {moduleItems.map((item) => (
-      <button
-        key={item.title}
-        type="button"
-        className="flex flex-col items-center gap-3 rounded-2xl px-3 py-4 text-center transition hover:-translate-y-1 hover:bg-white hover:shadow-md"
-      >
-        <span className="h-16 w-16 text-[#1f7ae0]">{iconMap[item.icon]}</span>
-        <span className="text-sm font-semibold text-slate-500">{item.title}</span>
-      </button>
-    ))}
-  </div>
-)
+const HomePage = () => {
+  const auth = getStoredPortalAuth()
+  const [announcements, setAnnouncements] = useState([])
+
+  useEffect(() => {
+    let active = true
+    const loadAnnouncements = async () => {
+      try {
+        const role = auth?.persona || 'student'
+        const response = await fetch(`${API_BASE_URL}/api/portal/announcements?role=${encodeURIComponent(role)}`, {
+          headers: {
+            'X-Student-Id': auth?.userId || DEFAULT_STUDENT_ID,
+          },
+        })
+        if (!response.ok) return
+        const payload = await response.json()
+        if (active) {
+          setAnnouncements(Array.isArray(payload) ? payload : [])
+        }
+      } catch {
+        // ignore announcement load failure on home
+      }
+    }
+    loadAnnouncements()
+    return () => {
+      active = false
+    }
+  }, [auth?.persona, auth?.userId])
+
+  return (
+    <div className="space-y-6">
+      {announcements.length > 0 && (
+        <div className="grid gap-3">
+          {announcements.slice(0, 2).map((item) => (
+            <div key={item.announcement_id} className="rounded-2xl border border-[#ead9b4] bg-[#fff6df] px-5 py-4 shadow-sm">
+              <p className="text-sm font-semibold text-slate-800">{item.title}</p>
+              <p className="mt-1 text-sm text-slate-600">{item.message}</p>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-x-5 gap-y-7 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+        {moduleItems.map((item) => (
+          <button
+            key={item.title}
+            type="button"
+            className="flex flex-col items-center gap-3 rounded-2xl px-3 py-4 text-center transition hover:-translate-y-1 hover:bg-white hover:shadow-md"
+          >
+            <span className="h-16 w-16 text-[#1f7ae0]">{iconMap[item.icon]}</span>
+            <span className="text-sm font-semibold text-slate-500">{item.title}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 const PortalSectionPage = ({ sectionType }) => {
   const navigate = useNavigate()
@@ -2303,6 +2463,7 @@ const PortalSectionPage = ({ sectionType }) => {
 const StudentShell = ({ children }) => {
   const auth = getStoredPortalAuth()
   const [chatOpen, setChatOpen] = useState(false)
+  const [accessBlocked, setAccessBlocked] = useState('')
 
   useEffect(() => {
     document.body.style.overflow = chatOpen ? 'hidden' : ''
@@ -2311,6 +2472,27 @@ const StudentShell = ({ children }) => {
     }
   }, [chatOpen])
 
+  useEffect(() => {
+    let active = true
+    const validateAccess = async () => {
+      if (!auth?.userId) return
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/auth/access?user_id=${encodeURIComponent(auth.userId)}`)
+        if (!response.ok) return
+        const payload = await response.json()
+        if (active && payload?.allowed === false) {
+          setAccessBlocked(payload.detail || 'This portal account has been blocked by admin.')
+        }
+      } catch {
+        // do not interrupt normal portal use on transient failures
+      }
+    }
+    validateAccess()
+    return () => {
+      active = false
+    }
+  }, [auth?.userId])
+
   if (!auth?.userId) {
     return <Navigate to="/login" replace />
   }
@@ -2318,6 +2500,24 @@ const StudentShell = ({ children }) => {
   const handleLogout = () => {
     clearPortalSession()
     window.location.href = '/login'
+  }
+
+  if (accessBlocked) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#f6f8fc] px-4">
+        <div className="w-full max-w-lg rounded-3xl border border-rose-200 bg-white p-8 shadow-lg">
+          <h2 className="text-xl font-semibold text-slate-800">Portal Access Blocked</h2>
+          <p className="mt-3 text-sm text-slate-600">{accessBlocked}</p>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="mt-6 rounded-2xl bg-rose-500 px-4 py-3 text-sm font-semibold text-white shadow"
+          >
+            Return to Login
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (

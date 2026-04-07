@@ -48,6 +48,7 @@ class RecentQueryItem(BaseModel):
     query: str
     session_id: str
     created_at: Optional[str] = None
+    status: Optional[str] = None
 
 
 class TopIntentItem(BaseModel):
@@ -61,6 +62,8 @@ class AdminUserItem(BaseModel):
     email: str
     persona: str
     semester: Optional[int] = None
+    verified: bool = False
+    blocked: bool = False
 
 
 class AdminReportItem(BaseModel):
@@ -76,6 +79,8 @@ class AdminFeedbackItem(BaseModel):
     rating: int
     comment: Optional[str] = None
     created_at: Optional[str] = None
+    reviewed: bool = False
+    review_note: Optional[str] = None
 
 
 class AdminAnnouncementRequest(BaseModel):
@@ -87,6 +92,30 @@ class AdminAnnouncementRequest(BaseModel):
 class AdminAnnouncementResponse(BaseModel):
     status: str
     announcement_id: str
+
+
+class AdminAnnouncementItem(BaseModel):
+    announcement_id: str
+    title: str
+    message: str
+    audience: str
+    created_at: Optional[str] = None
+    status: str = "queued"
+
+
+class AdminUserStateRequest(BaseModel):
+    verified: Optional[bool] = None
+    blocked: Optional[bool] = None
+
+
+class AdminFeedbackReviewRequest(BaseModel):
+    reviewed: bool = False
+    note: Optional[str] = Field(default=None, max_length=1000)
+
+
+class PortalAccessResponse(BaseModel):
+    allowed: bool
+    detail: Optional[str] = None
 
 
 class FeedbackRequest(BaseModel):

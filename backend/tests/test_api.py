@@ -51,6 +51,19 @@ def test_portal_login_staff_rejects_student_email_with_clear_message() -> None:
     assert "student access" in response.json()["detail"].lower()
 
 
+def test_portal_login_rejects_blocked_user(monkeypatch) -> None:
+    from app.api.routes import persistence_service
+
+    monkeypatch.setattr(persistence_service, "is_user_blocked", lambda user_id: user_id == "AI23001")
+    response = client.post(
+        "/api/auth/login",
+        json={"email": "rahul@krmangalam.edu.in", "persona": "student"},
+    )
+
+    assert response.status_code == 403
+    assert "blocked" in response.json()["detail"].lower()
+
+
 def test_chat_returns_fallback_when_llm_unavailable(monkeypatch) -> None:
     from app.api.routes import chat_service
 
@@ -794,15 +807,36 @@ def test_admin_users_endpoint_shape(monkeypatch) -> None:
     from app.schemas import AdminUserItem
 
     monkeypatch.setattr(auth_service, "token_is_admin", lambda token: token == "admin-token")
+    monkeypatch.setattr("app.api.routes.get_portal_config", lambda: {"students": {}, "faculty": {}})
     monkeypatch.setattr(
         admin_service,
         "list_users",
-        lambda: [AdminUserItem(user_id="AI23001", name="Rahul", email="rahul@krmangalam.edu.in", persona="student", semester=3)],
+        lambda *args, **kwargs: [AdminUserItem(user_id="AI23001", name="Rahul", email="rahul@krmangalam.edu.in", persona="student", semester=3)],
     )
     response = client.get("/api/admin/users", headers=ADMIN_HEADERS)
 
     assert response.status_code == 200
     assert response.json()[0]["email"] == "rahul@krmangalam.edu.in"
+
+
+def test_admin_user_state_update_endpoint(monkeypatch) -> None:
+    from app.api.routes import auth_service
+
+    monkeypatch.setattr(auth_service, "token_is_admin", lambda token: token == "admin-token")
+    monkeypatch.setattr(
+        "app.api.routes.get_portal_config",
+        lambda: {"students": {"AI23001": {"name": "Rahul", "semester": 3}}, "faculty": {}},
+    )
+    response = client.post(
+        "/api/admin/users/AI23001/state",
+        headers=ADMIN_HEADERS,
+        json={"blocked": True, "verified": True},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["blocked"] is True
+    assert payload["verified"] is True
 
 
 def test_admin_reports_endpoint_shape(monkeypatch) -> None:
@@ -837,10 +871,37 @@ def test_admin_feedback_endpoint_shape(monkeypatch) -> None:
     assert response.json()[0]["message_id"] == "m1"
 
 
-def test_admin_announcements_endpoint_shape(monkeypatch) -> None:
-    from app.api.routes import auth_service
+def test_admin_feedback_review_endpoint_shape(monkeypatch) -> None:
+    from app.api.routes import auth_service, persistence_service
+    from app.schemas import AdminFeedbackItem
 
     monkeypatch.setattr(auth_service, "token_is_admin", lambda token: token == "admin-token")
+    monkeypatch.setattr(persistence_service, "save_feedback_review", lambda **kwargs: {"reviewed": True, "note": kwargs.get("note", "")})
+    monkeypatch.setattr(
+        persistence_service,
+        "get_feedback_entries",
+        lambda limit=100: [AdminFeedbackItem(message_id="m1", rating=4, comment="Needs update", created_at=None, reviewed=True, review_note="Updated")],
+    )
+    response = client.post(
+        "/api/admin/feedback/m1/review",
+        headers=ADMIN_HEADERS,
+        json={"reviewed": True, "note": "Updated"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["reviewed"] is True
+
+
+def test_admin_announcements_endpoint_shape(monkeypatch) -> None:
+    from app.api.routes import auth_service, persistence_service
+    from app.schemas import AdminAnnouncementItem
+
+    monkeypatch.setattr(auth_service, "token_is_admin", lambda token: token == "admin-token")
+    monkeypatch.setattr(
+        persistence_service,
+        "create_announcement",
+        lambda **kwargs: AdminAnnouncementItem(announcement_id="announce-1", title=kwargs["title"], message=kwargs["message"], audience=kwargs["audience"], created_at=None, status="queued"),
+    )
     response = client.post(
         "/api/admin/announcements",
         headers=ADMIN_HEADERS,
@@ -851,6 +912,35 @@ def test_admin_announcements_endpoint_shape(monkeypatch) -> None:
     payload = response.json()
     assert payload["status"] == "queued"
     assert payload["announcement_id"].startswith("announce-")
+
+
+def test_portal_announcements_endpoint_shape(monkeypatch) -> None:
+    from app.api.routes import persistence_service
+    from app.schemas import AdminAnnouncementItem
+
+    monkeypatch.setattr(
+        persistence_service,
+        "get_announcements",
+        lambda audience=None, limit=5: [AdminAnnouncementItem(announcement_id="a1", title="Notice", message="Welcome back", audience=audience or "student", created_at=None, status="queued")],
+    )
+    response = client.get("/api/portal/announcements?role=student")
+
+    assert response.status_code == 200
+    assert response.json()[0]["title"] == "Notice"
+
+
+def test_feedback_reviews_endpoint_shape(monkeypatch) -> None:
+    from app.api.routes import persistence_service
+
+    monkeypatch.setattr(
+        persistence_service,
+        "get_feedback_reviews",
+        lambda message_ids: {"m1": {"reviewed": True, "note": "Updated answer"}},
+    )
+    response = client.get("/api/feedback/reviews?message_ids=m1")
+
+    assert response.status_code == 200
+    assert response.json()["m1"]["reviewed"] is True
 
 
 def test_admin_endpoint_requires_key() -> None:

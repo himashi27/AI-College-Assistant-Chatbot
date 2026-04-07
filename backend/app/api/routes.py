@@ -2,9 +2,11 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 
 from app.config import get_settings
 from app.schemas import (
+    AdminAnnouncementItem,
     AdminAnnouncementRequest,
     AdminAnnouncementResponse,
     AdminFeedbackItem,
+    AdminFeedbackReviewRequest,
     AdminStatsResponse,
     AdminReportItem,
     AssignmentParseRequest,
@@ -12,6 +14,7 @@ from app.schemas import (
     AdminLoginRequest,
     AdminLoginResponse,
     AdminUserItem,
+    AdminUserStateRequest,
     ChatRequest,
     ChatResponse,
     FeedbackRequest,
@@ -21,6 +24,7 @@ from app.schemas import (
     PersonasResponse,
     PortalLoginRequest,
     PortalLoginResponse,
+    PortalAccessResponse,
     PortalSectionResponse,
     QuickActionsResponse,
     QueryRouteRequest,
@@ -85,7 +89,19 @@ async def portal_login(payload: PortalLoginRequest) -> PortalLoginResponse:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=identity_service.login_error_message(email=payload.email, persona=payload.persona),
         )
+    if persistence_service.is_user_blocked(resolved.get("user_id")):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This portal account has been blocked by admin.",
+        )
     return PortalLoginResponse(**resolved)
+
+
+@router.get("/auth/access", response_model=PortalAccessResponse)
+async def portal_access(user_id: str | None = None) -> PortalAccessResponse:
+    if persistence_service.is_user_blocked(user_id):
+        return PortalAccessResponse(allowed=False, detail="This portal account has been blocked by admin.")
+    return PortalAccessResponse(allowed=True)
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -97,6 +113,8 @@ async def chat(payload: ChatRequest, authorization: str | None = Header(default=
     )
     if resolved_student_id:
         payload.user_id = resolved_student_id
+    if persistence_service.is_user_blocked(payload.user_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This portal account has been blocked by admin.")
     return await chat_service.get_chat_response(payload)
 
 
@@ -109,6 +127,8 @@ async def query_route(payload: QueryRouteRequest, authorization: str | None = He
     )
     if resolved_student_id:
         payload.user_id = resolved_student_id
+    if persistence_service.is_user_blocked(payload.user_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This portal account has been blocked by admin.")
     route_result = query_router.route_query(payload)
     if route_result.action != "fallback_llm":
         persistence_service.persist_route_interaction(
@@ -147,6 +167,11 @@ async def portal_section(
             header_student_id=x_student_id,
             explicit_student_id=student_id,
         )
+        if persistence_service.is_user_blocked(resolved_student_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This portal account has been blocked by admin.",
+            )
         if portal_data_service.section_requires_auth(section_name) and not resolved_student_id:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -279,7 +304,22 @@ async def admin_top_intents() -> list[TopIntentItem]:
 
 @router.get("/admin/users", response_model=list[AdminUserItem], dependencies=[Depends(require_admin)])
 async def admin_users() -> list[AdminUserItem]:
-    return admin_service.list_users()
+    cfg = get_portal_config()
+    all_user_ids = list((cfg.get("students") or {}).keys()) + list((cfg.get("faculty") or {}).keys())
+    state_map = {user_id: persistence_service.get_user_state(user_id) for user_id in all_user_ids}
+    return admin_service.list_users(state_map)
+
+
+@router.post("/admin/users/{user_id}/state", response_model=AdminUserItem, dependencies=[Depends(require_admin)])
+async def admin_user_state(user_id: str, payload: AdminUserStateRequest) -> AdminUserItem:
+    persistence_service.update_user_state(user_id, verified=payload.verified, blocked=payload.blocked)
+    cfg = get_portal_config()
+    all_user_ids = list((cfg.get("students") or {}).keys()) + list((cfg.get("faculty") or {}).keys())
+    state_map = {item_id: persistence_service.get_user_state(item_id) for item_id in all_user_ids}
+    users = {item.user_id: item for item in admin_service.list_users(state_map)}
+    if user_id not in users:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return users[user_id]
 
 
 @router.get("/admin/reports", response_model=list[AdminReportItem], dependencies=[Depends(require_admin)])
@@ -292,10 +332,36 @@ async def admin_feedback() -> list[AdminFeedbackItem]:
     return persistence_service.get_feedback_entries()
 
 
+@router.post("/admin/feedback/{message_id}/review", response_model=AdminFeedbackItem, dependencies=[Depends(require_admin)])
+async def admin_feedback_review(message_id: str, payload: AdminFeedbackReviewRequest) -> AdminFeedbackItem:
+    persistence_service.save_feedback_review(message_id=message_id, reviewed=payload.reviewed, note=payload.note)
+    entry = next((item for item in persistence_service.get_feedback_entries(limit=100) if item.message_id == message_id), None)
+    if entry:
+        return entry
+    review = persistence_service.get_feedback_review(message_id)
+    return AdminFeedbackItem(message_id=message_id, rating=0, comment=None, created_at=None, reviewed=bool(review.get("reviewed")), review_note=review.get("note"))
+
+
+@router.get("/feedback/reviews")
+async def feedback_reviews(message_ids: str = "") -> dict[str, dict]:
+    items = [item.strip() for item in message_ids.split(",") if item.strip()]
+    return persistence_service.get_feedback_reviews(items)
+
+
 @router.post("/admin/announcements", response_model=AdminAnnouncementResponse, dependencies=[Depends(require_admin)])
 async def admin_announcements(payload: AdminAnnouncementRequest) -> AdminAnnouncementResponse:
-    announcement_id = f"announce-{abs(hash((payload.title, payload.message, payload.audience))) % 1000000}"
-    return AdminAnnouncementResponse(status="queued", announcement_id=announcement_id)
+    item = persistence_service.create_announcement(title=payload.title, message=payload.message, audience=payload.audience)
+    return AdminAnnouncementResponse(status=item.status, announcement_id=item.announcement_id)
+
+
+@router.get("/admin/announcements", response_model=list[AdminAnnouncementItem], dependencies=[Depends(require_admin)])
+async def admin_announcements_list() -> list[AdminAnnouncementItem]:
+    return persistence_service.get_announcements(limit=20)
+
+
+@router.get("/portal/announcements", response_model=list[AdminAnnouncementItem])
+async def portal_announcements(role: str = "student") -> list[AdminAnnouncementItem]:
+    return persistence_service.get_announcements(audience=role, limit=5)
 
 
 @router.post("/feedback", response_model=FeedbackResponse)

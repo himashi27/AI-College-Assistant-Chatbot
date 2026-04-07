@@ -6,7 +6,7 @@ import uuid
 from typing import List
 
 from app.config import get_settings
-from app.schemas import AdminFeedbackItem, AdminReportItem, AdminStatsResponse, ChatRequest, FeedbackRequest, RecentQueryItem, SourceItem, TopIntentItem
+from app.schemas import AdminAnnouncementItem, AdminFeedbackItem, AdminReportItem, AdminStatsResponse, ChatRequest, FeedbackRequest, RecentQueryItem, SourceItem, TopIntentItem
 
 try:
     from supabase import Client, create_client
@@ -24,6 +24,9 @@ class PersistenceService:
         self._mem_messages: list[dict] = []
         self._mem_intents: list[dict] = []
         self._mem_feedback: list[dict] = []
+        self._mem_user_states: dict[str, dict] = {}
+        self._mem_announcements: list[dict] = []
+        self._mem_feedback_reviews: dict[str, dict] = {}
         self._report_keywords = {
             "hack": "Possible misuse request",
             "bypass": "Possible misuse request",
@@ -325,43 +328,7 @@ class PersistenceService:
         )
 
     def get_recent_queries(self, limit: int = 10) -> List[RecentQueryItem]:
-        if not self.enabled:
-            rows = [row for row in self._mem_messages if row.get("role") == "user"]
-            rows = sorted(rows, key=lambda item: item.get("created_at", ""), reverse=True)[:limit]
-            items = [
-                RecentQueryItem(
-                    query=row.get("message", ""),
-                    session_id=row.get("session_id", ""),
-                    created_at=row.get("created_at"),
-                )
-                for row in rows
-            ]
-            if items:
-                return items
-            return self._recent_queries_from_intents(limit)
-
-        try:
-            rows = (
-                self._client.table("chat_messages")
-                .select("message,session_id,created_at")
-                .eq("role", "user")
-                .order("created_at", desc=True)
-                .limit(limit)
-                .execute()
-            )
-            items = [
-                RecentQueryItem(
-                    query=row.get("message", ""),
-                    session_id=row.get("session_id", ""),
-                    created_at=row.get("created_at"),
-                )
-                for row in (rows.data or [])
-            ]
-            if items:
-                return items
-            return self._recent_queries_from_intents(limit)
-        except Exception:
-            return self._recent_queries_from_intents(limit)
+        return self._recent_queries_from_intents(limit)
 
     def _recent_queries_from_intents(self, limit: int = 10) -> List[RecentQueryItem]:
         if not self.enabled:
@@ -371,6 +338,7 @@ class PersistenceService:
                     query=row.get("query", ""),
                     session_id=row.get("session_id", ""),
                     created_at=row.get("created_at"),
+                    status="Logged",
                 )
                 for row in rows
             ]
@@ -388,6 +356,7 @@ class PersistenceService:
                     query=row.get("query", ""),
                     session_id=row.get("session_id", ""),
                     created_at=row.get("created_at"),
+                    status="Logged",
                 )
                 for row in (rows.data or [])
             ]
@@ -416,6 +385,8 @@ class PersistenceService:
                     rating=int(row.get("rating", 0)),
                     comment=row.get("comment"),
                     created_at=row.get("created_at"),
+                    reviewed=bool(self._mem_feedback_reviews.get(row.get("message_id", ""), {}).get("reviewed")),
+                    review_note=self._mem_feedback_reviews.get(row.get("message_id", ""), {}).get("note"),
                 )
                 for row in rows
             ]
@@ -434,6 +405,8 @@ class PersistenceService:
                     rating=int(row.get("rating", 0)),
                     comment=row.get("comment"),
                     created_at=row.get("created_at"),
+                    reviewed=bool(self._mem_feedback_reviews.get(row.get("message_id", ""), {}).get("reviewed")),
+                    review_note=self._mem_feedback_reviews.get(row.get("message_id", ""), {}).get("note"),
                 )
                 for row in (rows.data or [])
             ]
@@ -445,6 +418,8 @@ class PersistenceService:
                     rating=int(row.get("rating", 0)),
                     comment=row.get("comment"),
                     created_at=row.get("created_at"),
+                    reviewed=bool(self._mem_feedback_reviews.get(row.get("message_id", ""), {}).get("reviewed")),
+                    review_note=self._mem_feedback_reviews.get(row.get("message_id", ""), {}).get("note"),
                 )
                 for row in rows
             ]
@@ -500,3 +475,59 @@ class PersistenceService:
                     "created_at": now,
                 }
             )
+
+    def get_user_state(self, user_id: str | None) -> dict:
+        if not user_id:
+            return {}
+        return dict(self._mem_user_states.get(user_id, {}))
+
+    def update_user_state(self, user_id: str, *, verified: bool | None = None, blocked: bool | None = None) -> dict:
+        current = dict(self._mem_user_states.get(user_id, {}))
+        if verified is not None:
+            current["verified"] = bool(verified)
+        if blocked is not None:
+            current["blocked"] = bool(blocked)
+        self._mem_user_states[user_id] = current
+        return dict(current)
+
+    def is_user_blocked(self, user_id: str | None) -> bool:
+        if not user_id:
+            return False
+        return bool(self._mem_user_states.get(user_id, {}).get("blocked"))
+
+    def create_announcement(self, *, title: str, message: str, audience: str) -> AdminAnnouncementItem:
+        now = datetime.now(timezone.utc).isoformat()
+        announcement_id = f"announce-{abs(hash((title, message, audience, now))) % 1000000}"
+        item = {
+            "announcement_id": announcement_id,
+            "title": title,
+            "message": message,
+            "audience": audience,
+            "created_at": now,
+            "status": "queued",
+        }
+        self._mem_announcements.insert(0, item)
+        self._mem_announcements = self._mem_announcements[:25]
+        return AdminAnnouncementItem(**item)
+
+    def get_announcements(self, audience: str | None = None, limit: int = 10) -> list[AdminAnnouncementItem]:
+        rows = self._mem_announcements
+        if audience:
+            allowed = {audience.lower(), "all"}
+            rows = [row for row in rows if str(row.get("audience", "")).lower() in allowed]
+        return [AdminAnnouncementItem(**row) for row in rows[:limit]]
+
+    def save_feedback_review(self, *, message_id: str, reviewed: bool, note: str | None = None) -> dict:
+        self._mem_feedback_reviews[message_id] = {
+            "reviewed": bool(reviewed),
+            "note": note or "",
+        }
+        return dict(self._mem_feedback_reviews[message_id])
+
+    def get_feedback_review(self, message_id: str | None) -> dict:
+        if not message_id:
+            return {}
+        return dict(self._mem_feedback_reviews.get(message_id, {}))
+
+    def get_feedback_reviews(self, message_ids: list[str]) -> dict[str, dict]:
+        return {message_id: dict(self._mem_feedback_reviews.get(message_id, {})) for message_id in message_ids if message_id}
