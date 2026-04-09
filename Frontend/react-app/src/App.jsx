@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
+import { Analytics } from '@vercel/analytics/react'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 const ENABLE_DIRECT_REDIRECT = (import.meta.env.VITE_ENABLE_DIRECT_REDIRECT || 'false').toLowerCase() === 'true'
@@ -2921,6 +2922,7 @@ function App() {
         />
         <Route path="/admin" element={<AdminPage />} />
       </Routes>
+      <Analytics />
     </BrowserRouter>
   )
 }
